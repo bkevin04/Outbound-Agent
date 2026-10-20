@@ -1,0 +1,10 @@
+# Run folders hold real people's names and emails: never commit them (this repo is public).
+runs/
+# The ICPs the runs reuse stay on this machine too.
+companies/
+__pycache__/
+*.pyc
+.DS_Store
+.venv/
+# API keys for the standalone run and the dashboard.
+.env
