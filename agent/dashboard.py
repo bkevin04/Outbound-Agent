@@ -1,14 +1,16 @@
 """A local dashboard for the agent: `python3 -m agent dashboard` opens it at http://127.0.0.1:8765.
 
-Start a run for a company, watch the stages and the log as it goes, and read the 10 leads and their emails. A run is
-the same `python -m agent run` in a subprocess, its output in run.log in the run folder, so a run started here is a
-run like any other. The server listens on 127.0.0.1 only and every API call needs the token handed to the page,
+Start a run for a company, watch the stages and the log as it goes, and read the 10 leads and their emails. Delete a
+run, or have a company's run start again every week (agent/schedule.py). A run is the same `python -m agent run` in a
+subprocess, its output in run.log and its process id in run.pid in the run folder, so a run started here, by a
+schedule or from the terminal through `agent scheduled` is a run like any other. The server listens on 127.0.0.1 only and every API call needs the token handed to the page,
 because the run folders hold real people's emails and a run spends Apollo credits."""
 import glob
 import json
 import os
 import re
 import secrets
+import shutil
 import subprocess
 import sys
 import threading
@@ -21,13 +23,49 @@ from . import common as c
 from . import llm
 from . import pipeline as pl
 from . import report as rep
+from . import schedule as sch
 from . import sequence as sq
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 LOG = "run.log"
 KEYS = {"anthropic": "ANTHROPIC_API_KEY", "apollo": "APOLLO_API_KEY", "lemlist": "LEMLIST_API_KEY",
         "lemlist_sender": "LEMLIST_SENDER_EMAIL", "clay": "CLAY_API_KEY", "clay_routine": "CLAY_ROUTINE_ID"}
-FILES = (c.LEADS_CSV, c.EMAILS, c.REPORT)
+FILES = (c.ACCOUNTS_XLSX, c.LEADS_CSV, c.EMAILS_DOCX, c.REPORT_DOCX, c.EMAILS, c.REPORT)
+TYPES = {".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+         ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+         ".csv": "text/csv; charset=utf-8", ".md": "text/markdown; charset=utf-8"}
+# Built from the run's files when a run made before they existed is downloaded: the file -> what it needs.
+DERIVED = {c.ACCOUNTS_XLSX: c.TOP10, c.EMAILS_DOCX: c.EMAILS, c.REPORT_DOCX: c.REPORT}
+
+
+def pid_alive(path):
+    """The process in run.pid is still an agent run (a stale pid that now belongs to something else is not)."""
+    try:
+        pid = int(c.read_text(path).strip())
+        os.kill(pid, 0)
+    except PermissionError:
+        return True
+    except (OSError, ValueError):
+        return False
+    try:
+        cmd = subprocess.run(["ps", "-p", str(pid), "-o", "command="], capture_output=True, text=True, timeout=5).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return True
+    return "agent" in cmd
+
+
+def available(folder):
+    """The downloads a run has: its files, and the ones that can be built from them."""
+    return [f for f in FILES if os.path.exists(os.path.join(folder, f))
+            or (f in DERIVED and os.path.exists(os.path.join(folder, DERIVED[f])))]
+
+
+def build(folder, name):
+    """Make a derived file that is not there yet (a run from before Excel and Word downloads)."""
+    if name == c.ACCOUNTS_XLSX:
+        rep.write_workbook(folder)
+    elif name in (c.EMAILS_DOCX, c.REPORT_DOCX):
+        rep.write_docs(folder)
 
 
 def python():
@@ -59,7 +97,9 @@ class Runs:
 
     def running(self, rid):
         p = self.procs.get(rid)
-        return p is not None and p.poll() is None
+        if p is not None:
+            return p.poll() is None
+        return pid_alive(os.path.join(self.path(rid), c.PID))
 
     def state(self, rid, meta):
         if self.running(rid):
@@ -81,11 +121,12 @@ class Runs:
                     continue
                 rid = f"{slug}/{date}"
                 top = c.load_optional(os.path.join(self.dir, slug, date, c.TOP10), [])
-                out.append({"id": rid, "company": meta.get("company"), "date": date, "state": self.state(rid, meta),
+                out.append({"id": rid, "company": meta.get("company"), "domain": meta.get("domain"), "date": date,
+                            "state": self.state(rid, meta),
                             "stages_done": len(meta.get("stages_done") or []), "leads": len(top)})
         return sorted(out, key=lambda r: (r["date"], r["company"] or ""), reverse=True)
 
-    def start(self, company, domain=None, date=None):
+    def start(self, company, domain=None, date=None, note="started from the dashboard"):
         slug = c.slugify(company)
         date = date or c.today().isoformat()
         rid = f"{slug}/{date}"
@@ -97,12 +138,28 @@ class Runs:
             cmd = [self.py, "-u", "-m", "agent", "run", company, "--date", date]
             cmd += ["--domain", domain] if domain else []
             log = open(os.path.join(folder, LOG), "a", encoding="utf-8")
-            log.write(f"\n--- started from the dashboard: {company} ---\n")
+            log.write(f"\n--- {note}: {company} ---\n")
             log.flush()
             self.procs[rid] = subprocess.Popen(cmd, cwd=c.ROOT, stdout=log, stderr=subprocess.STDOUT,
                                                env=os.environ.copy())
             log.close()
+            c.write_text(os.path.join(folder, c.PID), str(self.procs[rid].pid))
         return rid
+
+    def delete(self, rid):
+        """Remove a run's folder from this machine. Not while it runs. The lemlist campaign and the company's saved
+        ICP stay, so a later run still skips the accounts this one pitched."""
+        folder, root = os.path.realpath(self.path(rid)), os.path.realpath(self.dir)
+        if not folder.startswith(root + os.sep) or not os.path.isdir(folder):
+            raise ValueError("no such run")
+        if self.running(rid):
+            raise ValueError("this run is still going: delete it once it has finished")
+        with self.lock:
+            shutil.rmtree(folder)
+            self.procs.pop(rid, None)
+            parent = os.path.dirname(folder)
+            if not os.listdir(parent):
+                os.rmdir(parent)
 
     def log(self, rid, offset=0):
         path = os.path.join(self.path(rid), LOG)
@@ -195,7 +252,7 @@ class Runs:
             "lemlist": {"campaign": lem.get("campaign_name"), "status": lem.get("status"), "sender": lem.get("sender"),
                         "delays": lem.get("delays"),
                         "added": sum(1 for r in lem.get("results") or [] if r.get("outcome") == "added")} if lem else None,
-            "files": [f for f in FILES if os.path.exists(os.path.join(folder, f))],
+            "files": available(folder),
         }
 
 
@@ -222,12 +279,20 @@ def keys_state():
 
 
 def save_keys(values, path=c.ENV):
-    """Write the keys given into .env (git-ignored, readable by you only) and into this process's environment."""
+    """Write the keys given into .env (git-ignored, readable by you only) and into this process's environment.
+    clear_<field> removes that key instead (an empty field keeps the one you have)."""
+    if (values.get("clay_routine") or "").strip().startswith("clay_"):
+        raise ValueError("that is a Clay API key, not a function ID: copy the ID (function:t_...) from Clay, "
+                         "Functions, Details")
     lines = []
     if os.path.exists(path):
         with open(path, encoding="utf-8") as f:
             lines = f.read().splitlines()
     for k, env in KEYS.items():
+        if values.get(f"clear_{k}"):
+            lines = [ln for ln in lines if not ln.startswith(env + "=")]
+            os.environ.pop(env, None)
+            continue
         v = (values.get(k) or "").strip()
         if not v:
             continue
@@ -240,7 +305,8 @@ def save_keys(values, path=c.ENV):
     os.chmod(path, 0o600)
 
 
-def make_handler(runs, token, sdk):
+def make_handler(runs, token, sdk, scheduler=None):
+    scheduler = scheduler or sch.Scheduler(runs.dir, runs.py)
     page = open(os.path.join(HERE, "dashboard.html"), encoding="utf-8").read().replace("__TOKEN__", token)
 
     class Handler(BaseHTTPRequestHandler):
@@ -287,7 +353,8 @@ def make_handler(runs, token, sdk):
             rid = (q.get("id") or [""])[0]
             if method == "GET" and path == "state":
                 return self._send(200, {"keys": keys_state(), "sdk": sdk, "claude": claude_backend(),
-                                        "runs": runs.list()})
+                                        "runs": runs.list(), "schedules": scheduler.all(),
+                                        "can_schedule": scheduler.supported()})
             if method == "GET" and path == "run":
                 return self._send(200, runs.detail(rid))
             if method == "GET" and path == "log":
@@ -296,9 +363,12 @@ def make_handler(runs, token, sdk):
                 name = (q.get("name") or [""])[0]
                 if name not in FILES:
                     raise ValueError("unknown file")
-                with open(os.path.join(runs.path(rid), name), "rb") as f:
+                folder = runs.path(rid)
+                if not os.path.exists(os.path.join(folder, name)) and name in available(folder):
+                    build(folder, name)
+                with open(os.path.join(folder, name), "rb") as f:
                     data = f.read()
-                return self._send(200, data, "text/csv; charset=utf-8" if name.endswith(".csv") else "text/markdown; charset=utf-8",
+                return self._send(200, data, TYPES[os.path.splitext(name)[1]],
                                   {"Content-Disposition": f'attachment; filename="{rid.replace("/", "-")}-{name}"'})
             if method == "POST" and path == "run":
                 b = self._body()
@@ -315,6 +385,19 @@ def make_handler(runs, token, sdk):
                 return self._send(200, {"id": rid})
             if method == "POST" and path == "check":
                 return self._send(200, {"checks": check_keys(runs.py)})
+            if method == "POST" and path == "delete":
+                runs.delete(self._body().get("id"))
+                return self._send(200, {"runs": runs.list()})
+            if method == "POST" and path == "schedule":
+                b = self._body()
+                if not (b.get("company") or "").strip():
+                    raise ValueError("which company?")
+                if b.get("off"):
+                    scheduler.remove(c.slugify(b["company"]))
+                else:
+                    scheduler.set(b["company"].strip(), (b.get("domain") or "").strip() or None,
+                                  b.get("day") or "Monday", b.get("time") or "09:00")
+                return self._send(200, {"schedules": scheduler.all()})
             if method == "POST" and path == "keys":
                 save_keys(self._body())
                 return self._send(200, {"keys": keys_state()})

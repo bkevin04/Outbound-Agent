@@ -4,10 +4,26 @@ import json
 import os
 import tempfile
 import unittest
+import zipfile
+import xml.etree.ElementTree as ET
 
 os.environ["OUTBOUND_TODAY"] = "2026-10-18"
 
-from agent import champions, common, icp as icp_mod, longlist, report, score, sequence, voice  # noqa: E402
+from agent import champions, common, docx, icp as icp_mod, longlist, report, score, sequence, voice, xlsx  # noqa: E402
+
+
+def read_xlsx(path):
+    """{sheet name: [[cell text]]}, read back with the standard library. Every part of the file has to parse."""
+    ns = {"m": xlsx.MAIN}
+    with zipfile.ZipFile(path) as z:
+        for name in z.namelist():
+            ET.fromstring(z.read(name))
+        names = [s.get("name") for s in ET.fromstring(z.read("xl/workbook.xml")).find("m:sheets", ns)]
+        out = {}
+        for i, name in enumerate(names, 1):
+            data = ET.fromstring(z.read(f"xl/worksheets/sheet{i}.xml")).find("m:sheetData", ns)
+            out[name] = [["".join(cell.itertext()) for cell in row] for row in data]
+        return out
 from agent.__main__ import main  # noqa: E402
 
 ICP = {
@@ -298,6 +314,50 @@ class ReportTests(unittest.TestCase):
         self.assertTrue(csv_text.startswith("rank,account,domain"))
 
 
+class XlsxTests(unittest.TestCase):
+    def test_write_and_read_back(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "t.xlsx")
+            xlsx.write(path, [
+                {"name": "Top 10", "widths": [4, 20, 40], "header": ["#", "Account", "Why <they> fit & more"],
+                 "rows": [[1, xlsx.link("Alpha", "https://alpha.dev"), "An API\x07 & docs"], [2, "Beta's", 2.5]],
+                 "marks": {0: "pick"}, "freeze_cols": 2},
+                {"name": "How: picked?", "widths": [30], "rows": [[xlsx.Cell("Title", "title")], ["x" * 40000]]},
+                {"name": "Top 10", "widths": [4], "rows": [[1]]}])
+            book = read_xlsx(path)
+            self.assertEqual(list(book), ["Top 10", "How picked", "Top 10 2"])   # Excel's sheet name rules
+            self.assertEqual(book["Top 10"][1], ["1", "Alpha", "An API & docs"])  # control character dropped
+            self.assertEqual(book["Top 10"][0][2], "Why <they> fit & more")
+            self.assertEqual(len(book["How picked"][1][0]), xlsx.MAX_CELL)
+            with zipfile.ZipFile(path) as z:
+                rels = z.read("xl/worksheets/_rels/sheet1.xml.rels").decode()
+                sheet = z.read("xl/worksheets/sheet1.xml").decode()
+            self.assertIn('Target="https://alpha.dev" TargetMode="External"', rels)
+            self.assertIn('state="frozen"', sheet)
+            self.assertIn('<autoFilter ref="A1:C3"/>', sheet)
+            self.assertIn('<c r="C2" s="6"', sheet)    # the picked row is shaded to the last column
+
+    def test_word_document(self):
+        md = ("# Acme outbound run\n\n**2 leads.** See [the docs](https://acme.dev/docs).\n\n## The 10\n\n"
+              "| # | Account |\n|---|---|\n| 1 | Alpha & Co |\n\n- one\n- two\n\n## Next\n\n[I would attach a video]\n")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = docx.write(os.path.join(tmp, "r.docx"), md, title="Acme", break_before=2)
+            with zipfile.ZipFile(path) as z:
+                parts = {n: z.read(n).decode() for n in z.namelist()}
+        for text in parts.values():
+            ET.fromstring(text)                                   # every part is well-formed XML
+        body = parts["word/document.xml"]
+        self.assertEqual(body.count("<w:tbl>"), 1)
+        self.assertIn("Alpha &amp; Co", body)
+        self.assertEqual(body.count('<w:numId w:val="1"/>'), 2)     # two bullets
+        self.assertEqual(body.count("<w:pageBreakBefore/>"), 1)     # the second ## starts a page, the first does not
+        self.assertIn("<w:i/>", body)                               # the bracketed note
+        self.assertIn('Target="https://acme.dev/docs" TargetMode="External"', parts["word/_rels/document.xml.rels"])
+
+    def test_col_name(self):
+        self.assertEqual([xlsx.col_name(i) for i in (0, 25, 26, 27, 701, 702)], ["A", "Z", "AA", "AB", "ZZ", "AAA"])
+
+
 class CliTests(unittest.TestCase):
     def test_end_to_end(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -322,6 +382,19 @@ class CliTests(unittest.TestCase):
             main(["report", run])
             self.assertIn("ana@alpha.dev", common.read_text(os.path.join(run, common.LEADS_CSV)))
             self.assertIn("The funnel in numbers", common.read_text(os.path.join(run, common.REPORT)))
+            book = read_xlsx(os.path.join(run, common.ACCOUNTS_XLSX))
+            ten, short, everyone, how = book.values()
+            self.assertEqual(ten[0][:7], ["#", "Account", "Type", "Why they fit", "Trigger", "Champion", "Contact"])
+            self.assertEqual(ten[1][1], "Alpha")
+            self.assertEqual(ten[1][5:7], ["Ana Lee (Head of DevRel)", "ana@alpha.dev"])
+            self.assertEqual(len(short), 1 + 3)
+            searched = common.load(os.path.join(run, common.LONGLIST))["searched"]
+            self.assertEqual(len(everyone), 1 + searched)    # every company the search found, dropped ones included
+            outcomes = {r[1]: r[4] for r in everyone[1:]}
+            self.assertEqual(outcomes["Alpha"], "Top 10, #1")
+            self.assertEqual(outcomes["Mapbox"], "Out at the long list: already a customer")
+            self.assertTrue(outcomes["Gamma"].endswith("(still needs a dated trigger)"))   # its only round is old
+            self.assertIn("How the score works", [r[0] for r in how if r])
 
 
 if __name__ == "__main__":

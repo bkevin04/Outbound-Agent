@@ -26,6 +26,10 @@ LEMLIST_LEADS = "lemlist_leads.json"
 LEMLIST_RESULT = "lemlist_result.json"
 LEADS_CSV = "leads.csv"
 REPORT = "report.md"
+ACCOUNTS_XLSX = "accounts.xlsx"
+EMAILS_DOCX = "emails.docx"
+REPORT_DOCX = "report.docx"
+PID = "run.pid"
 
 
 def slugify(name):

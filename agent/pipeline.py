@@ -12,6 +12,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 
 from . import champions as ch
+from . import clay as clay_mod
 from . import rest
 from . import common as c
 from . import icp as icp_mod
@@ -288,9 +289,13 @@ class Pipeline:
     def clay_results(self, accounts):
         """CLAY_ROUTINE_ID run once over the shortlist, in Clay credits. The answer is kept in enrich/clay.json, so a
         resumed run never pays twice. -> {domain: Clay's result}; {} when Clay is not connected or no function is set."""
-        routine = os.environ.get("CLAY_ROUTINE_ID", "").strip()
         path = self.p(ENRICH_DIR, CLAY_RAW)
         if not os.path.exists(path):
+            try:
+                routine = clay_mod.routine_from_env()
+            except SystemExit as e:
+                self.note(f"Clay not used: {e}")
+                return {}
             if not (self.clay and routine):
                 return {}
             inputs = [k.strip() for k in os.environ.get("CLAY_ROUTINE_INPUTS", "domain,name").split(",") if k.strip()]
@@ -620,6 +625,8 @@ class Pipeline:
         md = rep.to_md(self.meta, icp, self.load(c.LONGLIST), sl.get("shortlist", []), self.load(c.ENRICHMENT, {}),
                        table, lem, sl.get("triage_dropped", []))
         c.write_text(self.p(c.REPORT), md)
+        rep.write_workbook(self.run)
+        rep.write_docs(self.run)
         return self.summary(table, lem)
 
     def summary(self, table, lem):
@@ -649,7 +656,9 @@ class Pipeline:
                    f"{sum(r['outcome'] == 'added' for r in lem['results'])} new leads, sent from {lem.get('sender') or 'nobody yet'}, "
                    "never launched." if lem else
                    "lemlist: not loaded (no LEMLIST_API_KEY)."),
-                  f"Files: {self.p(c.LEADS_CSV)}, {self.p(c.EMAILS)}, {self.p(c.REPORT)}"]
+                  f"Files: {self.p(c.ACCOUNTS_XLSX)} (the 100, the 30 and the 10, and how they were picked), "
+                  f"{self.p(c.LEADS_CSV)}, {self.p(c.EMAILS_DOCX)} and {self.p(c.REPORT_DOCX)} (Word), "
+                  f"{self.p(c.EMAILS)}, {self.p(c.REPORT)}"]
         if self.meta["notes"]:
             lines += ["", "To check:"] + [f"- {n}" for n in self.meta["notes"]]
         return "\n".join(lines)

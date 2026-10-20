@@ -3,7 +3,8 @@ API, Apollo and lemlist through their REST APIs). The other commands are the det
 (.claude/skills/outbound-agent/SKILL.md) runs between its research, connector calls and writing.
 
   python3 -m agent run "Acme" --domain acme.dev           the whole run, stages 0 to 10
-  python3 -m agent dashboard                              the local dashboard: start runs, watch them, read the leads
+  python3 -m agent dashboard                              the local dashboard: start, watch, schedule, delete runs
+  python3 -m agent scheduled "Acme" --domain acme.dev    what a weekly schedule runs (today's run, logged for the dashboard)
   python3 -m agent check-keys                             test the Claude, Apollo and lemlist keys (free calls)
   python3 -m agent new "Acme" --domain acme.dev          make runs/<slug>/<date>/ (reuses companies/<slug>/icp.json)
   python3 -m agent validate <run>                         check icp.json
@@ -14,7 +15,7 @@ API, Apollo and lemlist through their REST APIs). The other commands are the det
   python3 -m agent check <run>                            top10.json ready for the champions stage?
   python3 -m agent champions <run> <raw-bulk-match-file>  Apollo reveal -> champions.json
   python3 -m agent sequence <run> render|lint|lemlist     emails.md / voice lint / lemlist steps + leads
-  python3 -m agent report <run>                           leads.csv + report.md
+  python3 -m agent report <run>                           leads.csv, report.md, accounts.xlsx, the .docx files
   python3 -m agent save-icp <run>                         keep the ICP in companies/<slug>/icp.json for next week
 """
 import argparse
@@ -49,6 +50,21 @@ def cmd_new(a):
 def cmd_run(a):
     c.load_env()
     print("\n" + pl.run(a.company, a.domain, c.parse_date(a.date) if a.date else None))
+
+
+def cmd_scheduled(a):
+    """What a weekly schedule starts (agent/schedule.py): today's run for the company, started the way the dashboard
+    starts one, so the dashboard shows it, and waited for."""
+    from . import dashboard
+    c.load_env()
+    runs = dashboard.Runs()
+    rid = runs.start(a.company, a.domain, note="started by the weekly schedule")
+    proc = runs.procs.get(rid)
+    if proc is None:
+        print(f"{rid} is already running")
+        return
+    print(f"{rid}: started, log in {os.path.join(runs.path(rid), dashboard.LOG)}", flush=True)
+    sys.exit(proc.wait())
 
 
 def cmd_check_keys(a):
@@ -201,7 +217,8 @@ def cmd_report(a):
     md = rep.to_md(_run_meta(a.run), icp, c.load(_p(a.run, c.LONGLIST)), sl.get("shortlist", []),
                    c.load_optional(_p(a.run, c.ENRICHMENT), {}), table, lem, sl.get("triage_dropped", []))
     c.write_text(_p(a.run, c.REPORT), md)
-    print(f"wrote {_p(a.run, c.LEADS_CSV)} and {_p(a.run, c.REPORT)}")
+    print(f"wrote {_p(a.run, c.LEADS_CSV)}, {_p(a.run, c.REPORT)}, {rep.write_workbook(a.run)} and "
+          f"{', '.join(rep.write_docs(a.run))}")
 
 
 def cmd_save_icp(a):
@@ -228,6 +245,10 @@ def main(argv=None):
     r.add_argument("--domain")
     r.add_argument("--date")
     r.set_defaults(f=cmd_run)
+    x = s.add_parser("scheduled", help="what a weekly schedule runs: today's run, logged for the dashboard")
+    x.add_argument("company")
+    x.add_argument("--domain")
+    x.set_defaults(f=cmd_scheduled)
     k = s.add_parser("check-keys")
     k.add_argument("--json", action="store_true")
     k.set_defaults(f=cmd_check_keys)

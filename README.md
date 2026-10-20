@@ -12,7 +12,7 @@ flowchart LR
   F --> G[Champion per account<br/>Apollo search + reveal]
   G --> H[3-touch sequence<br/>in Kevin's voice]
   H --> I[lemlist campaign<br/>draft]
-  I --> J[leads.csv:<br/>10 leads + emails]
+  I --> J[accounts.xlsx:<br/>the 100, the 30, the 10<br/>+ champion emails]
 ```
 
 ## How it works
@@ -28,9 +28,22 @@ flowchart LR
 | 7 | Find the champion at each account (free search), reveal the 10 emails | Apollo | ≤10 credits |
 | 8 | Write Touch 1 (Day 1, the trigger), Touch 2 (Day 3, a proof story), Touch 3 (Day 5, close the loop) per champion, lint the voice | Claude + `agent/voice.py` | 0 |
 | 9 | Build the lemlist campaign, steps driven by per-lead variables, add the 10 leads | lemlist | 0 |
-| 10 | `leads.csv` + `report.md` | `agent/report.py` | 0 |
+| 10 | `accounts.xlsx` (the 100, the 30 and the 10, with how each was scored), `leads.csv`, the emails and the report in Word and Markdown | `agent/report.py` | 0 |
 
 At most 11 Apollo credits a run. The lemlist campaign is built and loaded but never launched: the emails are written as the company's BDR, and I don't work there yet.
+
+### What you get
+
+`accounts.xlsx` in the run folder, one tab per step of the funnel:
+
+| Tab | What is in it |
+|---|---|
+| Top 10 | The accounts table: #, Account, Type, Why they fit, Trigger, Champion, Contact, then the detail (email status, trigger date and source, the champion's LinkedIn, the closest customer, the score and how it scored) |
+| Top 30 | The shortlist that was researched: what they do, the best trigger, tech, community, hiring, the scores, and the result (picked, or why not: no dated trigger, segment full, already a customer, tied to a competitor) |
+| All 100 | Every company the Apollo search found, with how far it got and why it stopped there |
+| How they were picked | The funnel step by step, the scoring rules with this ICP's weights, the segments and the ICP |
+
+Next to it: `leads.csv`, and the emails and the report in Word (`emails.docx`, one account per page, and `report.docx`) and in Markdown. They hold the champions' emails, so they stay in `runs/` with the rest.
 
 ## Run it
 
@@ -41,7 +54,11 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python -m agent dashboard
 ```
 
-It opens http://127.0.0.1:8765. Add the Apollo and lemlist keys with **Edit keys** (they go into `.env`, which git ignores), click **Check connections**, enter a company and start a run. Claude needs no key: the agent uses Claude Code, signed in on your Claude plan. While it runs you see each stage and the live log; when it is done, the funnel, the 10 leads (open one for why it fits, the trigger's source and its 3 emails), what to check, Apollo credits and Claude cost, and whether the lemlist campaign is a draft. A run that stopped on an error shows the error and a **Resume run** button. The dashboard listens on your machine only and needs the token it hands its own page, since the run folders hold real people's emails.
+It opens http://127.0.0.1:8765. Add the Apollo and lemlist keys with **Edit keys** (they go into `.env`, which git ignores), click **Check connections**, enter a company and start a run. Claude needs no key: the agent uses Claude Code, signed in on your Claude plan. While it runs you see each stage and the live log; when it is done, the funnel, the 10 leads (open one for why it fits, the trigger's source and its 3 emails), downloads in Excel, CSV and Word, what to check, Apollo credits and Claude cost, and whether the lemlist campaign is a draft. A run that stopped on an error shows the error and a **Resume run** button. The **⋯** next to a run deletes it (its folder on this machine; the lemlist campaign and the saved ICP stay, so the next run still skips those accounts) or makes the company's run start again every week. The dashboard listens on your machine only and needs the token it hands its own page, since the run folders hold real people's emails.
+
+### Every week, on its own
+
+**⋯ → Run every week** picks a day and a time (Monday 09:00 by default). On a Mac that is a LaunchAgent in `~/Library/LaunchAgents` (on Linux a crontab line) that runs `python -m agent scheduled "<company>"`: today's run, logged in its run folder, so the dashboard shows it like any other. Each week brings 10 new accounts, since the accounts already in the lemlist campaign are skipped, for at most 11 Apollo credits, and the campaign stays a draft. The computer has to be on: a Mac that is asleep at that time runs it when it wakes up, one that is off skips that week. **⋯ → Stop the weekly runs** removes it.
 
 ### On its own, from the terminal (no Claude Code)
 
@@ -84,7 +101,19 @@ python3 -m agent report <run>
 
 Tests: `python3 -m unittest discover -s tests` (standard library only).
 
+## Try it with your own keys
+
+The repo holds code only: no keys, no runs, no company data. `.env`, `runs/` and `companies/` stay on the machine that made them (git ignores all three), so a copy of the repo starts empty and runs on your accounts:
+
+1. `git clone https://github.com/bkevin04/Outbound-Agent && cd Outbound-Agent`
+2. `python3 -m venv .venv && .venv/bin/pip install -r requirements.txt`
+3. Install [Claude Code](https://claude.com/claude-code) and sign in (`claude`): the agent runs its Claude steps on your plan. Or set `OUTBOUND_CLAUDE=api` and your own `ANTHROPIC_API_KEY`.
+4. `.venv/bin/python -m agent dashboard`, then **Edit keys**: your Apollo key, and lemlist and Clay if you use them. **Check connections** makes free calls only.
+
+A run spends your credits (at most 11 Apollo credits) and builds the lemlist campaign in your account as a draft that never sends. The dashboard runs on your computer only (127.0.0.1, behind a token it hands its own page): nobody reaches it from GitHub or the internet.
+
 ## What is in the repo and what is not
 
 - `companies/<slug>/icp.json`: the ICP, reused week to week. Git ignores it, so it stays on your machine.
 - `runs/`: every run's files, including the champions' emails. Git ignores it, and nothing with a person's email goes anywhere else.
+- `.env`: your API keys. Git ignores it, and the dashboard writes it readable by you only.

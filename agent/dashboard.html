@@ -46,7 +46,7 @@ body {
   color: var(--ink);
   font: 400 15px/1.55 var(--sans);
 }
-button, input { font: inherit; color: inherit; }
+button, input, select { font: inherit; color: inherit; }
 a { color: var(--blue); text-underline-offset: 2px; }
 :focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
 h1, h2, h3, h4 { margin: 0; line-height: 1.25; }
@@ -72,11 +72,15 @@ h1, h2, h3, h4 { margin: 0; line-height: 1.25; }
 form.new { display: grid; gap: 12px; }
 label { display: grid; gap: 4px; font-size: .875rem; font-weight: 500; }
 label .opt { color: var(--muted); font-weight: 400; }
+label.check { display: flex; align-items: center; gap: 8px; font-weight: 400; color: var(--muted); }
+label.check input { width: auto; padding: 0; }
 input {
   width: 100%; padding: 8px 10px; border-radius: 3px;
   border: 1px solid var(--line); background: var(--sheet);
 }
 input::placeholder { color: var(--muted); opacity: .7; }
+select { width: 100%; padding: 8px 10px; border-radius: 3px; border: 1px solid var(--line); background: var(--sheet); }
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .btn {
   appearance: none; cursor: pointer; border-radius: 3px; padding: 8px 14px; font-weight: 600;
   border: 1px solid var(--ink); background: var(--ink); color: var(--sheet);
@@ -89,12 +93,31 @@ a.btn { text-decoration: none; display: inline-block; }
 .msg { margin: 0; font-size: .85rem; min-height: 1.2em; color: var(--red); }
 
 .runlist { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
-.runlist button {
+.runlist li { position: relative; }
+.runlist .pick {
   width: 100%; text-align: left; background: none; border: 0; border-radius: 3px; cursor: pointer;
-  padding: 8px 10px; display: grid; grid-template-columns: 1fr auto; gap: 0 8px;
+  padding: 8px 40px 8px 10px; display: grid; grid-template-columns: 1fr auto; gap: 0 8px;
 }
-.runlist button:hover { background: var(--wash); }
-.runlist button[aria-current="true"] { background: var(--sheet); box-shadow: inset 3px 0 0 var(--blue); }
+.runlist .pick:hover { background: var(--wash); }
+.runlist .pick[aria-current="true"] { background: var(--sheet); box-shadow: inset 3px 0 0 var(--blue); }
+.runlist .more {
+  position: absolute; top: 50%; right: 4px; transform: translateY(-50%); width: 30px; height: 30px; border: 0;
+  border-radius: 3px; background: none; color: var(--muted); cursor: pointer; font-size: 1.15rem; line-height: 1;
+}
+.runlist .more:hover, .runlist .more[aria-expanded="true"] { background: var(--wash); color: var(--ink); }
+.runlist .sched { grid-column: 1; color: var(--blue); font-size: .78rem; }
+.menu {
+  position: fixed; z-index: 20; min-width: 14rem; padding: 4px; display: grid; background: var(--sheet);
+  border: 1px solid var(--line); border-radius: 4px; box-shadow: 0 10px 28px rgb(10 18 32 / .2);
+}
+.menu[hidden] { display: none; }
+.menu button {
+  text-align: left; background: none; border: 0; border-radius: 3px; padding: 8px 10px; cursor: pointer; font-size: .875rem;
+}
+.menu button:hover:not(:disabled), .menu button:focus-visible { background: var(--wash); outline: none; }
+.menu button:disabled { color: var(--muted); cursor: default; }
+.menu .danger { color: var(--red); }
+.menu hr { border: 0; border-top: 1px solid var(--line); margin: 4px 0; }
 .runlist .co { font-weight: 600; }
 .runlist .when { color: var(--muted); font-size: .8125rem; grid-column: 1; }
 .runlist .tag { grid-row: 1 / span 2; grid-column: 2; align-self: center; font-size: .8125rem; color: var(--muted); }
@@ -146,6 +169,8 @@ main { padding: 28px 36px 64px; max-width: 1180px; width: 100%; }
 .postmark.alarm { background: color-mix(in srgb, var(--red) 10%, transparent); }
 
 .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 20px; }
+.actions .also { align-self: center; font-size: .8125rem; color: var(--muted); }
+.actions .also a { color: inherit; }
 
 /* The route: a paper plane flies from stage to stage and waits over the one in progress */
 .route { position: relative; margin: 30px 14px 0; height: 106px; }
@@ -326,7 +351,8 @@ dialog .row { display: flex; gap: 8px; justify-content: flex-end; margin-top: 6p
     <label><span>lemlist <span class="opt">(optional: without it the campaign is not built)</span></span><input name="lemlist" type="password" autocomplete="off"></label>
     <label><span>Send from <span class="opt">(optional: the lemlist mailbox the emails come from; by default the one that owns the key)</span></span><input name="lemlist_sender" type="email" autocomplete="off" placeholder="you@yourdomain.com"></label>
     <label><span>Clay <span class="opt">(optional: shows your credit balance)</span></span><input name="clay" type="password" autocomplete="off"></label>
-    <label><span>Clay function ID <span class="opt">(optional: Clay, Functions, Details, for example "Get Funding and Expansion Events". It runs once on the 30 shortlisted accounts and uses Clay credits)</span></span><input name="clay_routine" autocomplete="off" placeholder="function:t_..."></label>
+    <label><span>Clay function ID <span class="opt">(optional: in Clay, Functions, open one, Details, and turn on API; for example "Get Funding and Expansion Events". It runs once on the 30 shortlisted accounts and uses Clay credits)</span></span><input name="clay_routine" autocomplete="off" placeholder="function:t_..."></label>
+    <label class="check"><input type="checkbox" name="clear_clay_routine" value="1"> Remove the saved function ID (the research is then web only)</label>
     <p class="msg" id="keysMsg" role="status"></p>
     <div class="row">
       <button class="btn quiet" type="button" id="keysCancel">Cancel</button>
@@ -334,6 +360,24 @@ dialog .row { display: flex; gap: 8px; justify-content: flex-end; margin-top: 6p
     </div>
   </form>
 </dialog>
+
+<dialog id="schedDialog" aria-labelledby="schedTitle">
+  <form id="schedForm">
+    <h2 id="schedTitle">Run every week</h2>
+    <p>On the day and time you pick, this computer starts a new run for the company: 10 new accounts (the ones already pitched are skipped), at most 11 Apollo credits, and the lemlist campaign stays a draft. The computer has to be on: a Mac that is asleep then runs it when it wakes up.</p>
+    <div class="two">
+      <label>Day <select name="day"><option>Monday</option><option>Tuesday</option><option>Wednesday</option><option>Thursday</option><option>Friday</option><option>Saturday</option><option>Sunday</option></select></label>
+      <label>Time <input name="time" type="time" value="09:00" required></label>
+    </div>
+    <p class="msg" id="schedMsg" role="status"></p>
+    <div class="row">
+      <button class="btn quiet" type="button" id="schedCancel">Cancel</button>
+      <button class="btn" type="submit">Save schedule</button>
+    </div>
+  </form>
+</dialog>
+
+<div class="menu" id="runMenu" role="menu" hidden></div>
 
 <script>
 const TOKEN = document.querySelector('meta[name="token"]').content;
@@ -358,6 +402,8 @@ async function api(path, body) {
 
 let keyState = {}, sdkVersion = null, checks = null, claudeVia = 'code';
 let selected = null, requested = null, detail = null, logOffset = 0, runs = [];
+let schedules = {}, canSchedule = false, menuFor = null, schedTarget = null;
+const slugOf = id => (id || '').split('/')[0];
 const sections = {}, planeAt = {};
 const expanded = new Set();
 try { selected = localStorage.getItem('outbound.selected'); } catch (e) {}
@@ -395,12 +441,75 @@ async function checkKeys() {
 }
 
 function renderRuns() {
-  $('#runs').innerHTML = runs.length ? runs.map(r => `
-    <li><button type="button" data-id="${esc(r.id)}" aria-current="${r.id === selected}">
-      <span class="co">${esc(r.company)}</span>
-      <span class="when">${day(r.date)}${r.leads ? `, ${r.leads} leads` : ''}</span>
-      <span class="tag ${r.state}">${STATE_WORD[r.state]}</span>
-    </button></li>`).join('') : '<li class="none">No runs yet.</li>';
+  $('#runs').innerHTML = runs.length ? runs.map(r => {
+    const s = schedules[slugOf(r.id)];
+    return `<li>
+      <button type="button" class="pick" data-id="${esc(r.id)}" aria-current="${r.id === selected}">
+        <span class="co">${esc(r.company)}</span>
+        <span class="when">${day(r.date)}${r.leads ? `, ${r.leads} leads` : ''}</span>
+        ${s ? `<span class="sched">Every ${esc(s.day)}, ${esc(s.time)}</span>` : ''}
+        <span class="tag ${r.state}">${STATE_WORD[r.state]}</span>
+      </button>
+      <button type="button" class="more" data-menu="${esc(r.id)}" aria-haspopup="menu" aria-expanded="${menuFor === r.id}" aria-label="More for ${esc(r.company)}, ${esc(day(r.date))}">&#8943;</button>
+    </li>`;
+  }).join('') : '<li class="none">No runs yet.</li>';
+}
+
+// The three-dot menu of a run: weekly runs for its company, and deleting it.
+function openMenu(btn) {
+  const r = runs.find(x => x.id === btn.dataset.menu);
+  if (!r) return;
+  const s = schedules[slugOf(r.id)], m = $('#runMenu');
+  menuFor = r.id;
+  m.innerHTML = (!canSchedule ? '<button type="button" role="menuitem" disabled>Weekly runs need macOS or Linux</button>'
+      : s ? `<button type="button" role="menuitem" data-do="schedule">Change the weekly run (${esc(s.day)}, ${esc(s.time)})</button>
+             <button type="button" role="menuitem" data-do="unschedule">Stop the weekly runs</button>`
+      : '<button type="button" role="menuitem" data-do="schedule">Run every week...</button>')
+    + `<hr><button type="button" role="menuitem" class="danger" data-do="delete"${r.state === 'running' ? ' disabled' : ''}>${r.state === 'running' ? 'Delete (once it has finished)' : 'Delete this run'}</button>`;
+  m.hidden = false;
+  const b = btn.getBoundingClientRect();
+  m.style.left = `${Math.max(8, Math.min(b.right - m.offsetWidth, innerWidth - m.offsetWidth - 8))}px`;
+  m.style.top = `${Math.max(8, Math.min(b.bottom + 4, innerHeight - m.offsetHeight - 8))}px`;
+  btn.setAttribute('aria-expanded', 'true');
+  const first = $('button:not(:disabled)', m);
+  if (first) first.focus();
+}
+
+function closeMenu(focusBack) {
+  if (!menuFor) return;
+  $('#runMenu').hidden = true;
+  const b = $(`.more[data-menu="${CSS.escape(menuFor)}"]`);
+  menuFor = null;
+  if (b) { b.setAttribute('aria-expanded', 'false'); if (focusBack) b.focus(); }
+}
+
+async function deleteRun(r) {
+  if (!confirm(`Delete the ${r.company} run of ${day(r.date)}?\n\nIts leads, emails and files are removed from this computer. The lemlist campaign and the company's saved ICP stay, so the next run still skips these accounts.`)) return;
+  try {
+    await api('delete', {id: r.id});
+    if (selected === r.id) {
+      selected = requested = null; detail = null;
+      try { localStorage.removeItem('outbound.selected'); } catch (e) {}
+      $('#main').innerHTML = '';
+    }
+    await refreshState();
+  } catch (err) { showError(err); }
+}
+
+function openSchedule(r) {
+  const s = schedules[slugOf(r.id)], f = $('#schedForm');
+  schedTarget = r;
+  f.day.value = s ? s.day : 'Monday';
+  f.time.value = s ? s.time : '09:00';
+  $('#schedTitle').textContent = `Run ${r.company} every week`;
+  $('#schedMsg').textContent = '';
+  $('#schedDialog').showModal();
+}
+
+async function saveSchedule(body) {
+  schedules = (await api('schedule', body)).schedules;
+  renderRuns();
+  if (detail) renderRun(detail);
 }
 
 function renderEmpty() {
@@ -419,8 +528,13 @@ function postmark(d) {
   return `<div class="postmark off" role="img" aria-label="Not loaded into lemlist"><span class="small">lemlist</span><span class="big">Not loaded</span><span class="small">${d.state === 'running' ? 'yet' : ''}</span></div>`;
 }
 
+const DOWNLOADS = {'accounts.xlsx': 'Excel: accounts and leads', 'leads.csv': 'CSV: leads', 'emails.docx': 'Word: emails', 'report.docx': 'Word: report'};
+
 function actions(d) {
-  const files = d.files.map(f => `<a class="btn quiet" href="/api/file?id=${encodeURIComponent(d.id)}&name=${f}&t=${TOKEN}" download>Download ${f}</a>`).join('');
+  const link = (f, text, cls) => `<a${cls ? ` class="${cls}"` : ''} href="/api/file?id=${encodeURIComponent(d.id)}&name=${encodeURIComponent(f)}&t=${TOKEN}" download>${esc(text)}</a>`;
+  const md = d.files.filter(f => f.endsWith('.md')).map(f => link(f, f)).join(', ');
+  const files = d.files.filter(f => DOWNLOADS[f]).map(f => link(f, DOWNLOADS[f], 'btn quiet')).join('')
+    + (md ? `<span class="also">Markdown: ${md}</span>` : '');
   let primary = '';
   if (d.state === 'failed' || d.state === 'stopped') primary = `<button class="btn" type="button" data-act="resume">Resume run</button>`;
   else if (d.state === 'done') primary = `<button class="btn quiet" type="button" data-act="again">Start a new week's run</button>`;
@@ -509,7 +623,7 @@ const STAGE_NOTE = {
   find_champions: () => 'Finding the right person at each account and revealing their work email (at most 10 Apollo credits).',
   write_sequence: () => 'Writing 3 emails for each champion in Kevin\'s voice, then checking every sentence.',
   load_lemlist: () => 'Building the lemlist campaign as a draft with you as the sender: email 1 right away, email 2 two days later, email 3 two days after that. It is never launched, so nothing is sent.',
-  finish: () => 'Writing the report and leads.csv.',
+  finish: () => 'Writing accounts.xlsx (the 100, the 30 and the 10, with how each was scored), leads.csv, and the emails and report for Word.',
 };
 
 // The first stage not done: the one running, stopped or failed. -1 when all are done.
@@ -519,7 +633,7 @@ function head(d) {
   return `<div class="head">
       <div>
         <h2 class="company">${esc(d.company)}</h2>
-        <p class="sub">Run of ${day(d.date)}, ${STATE_WORD[d.state].toLowerCase()}</p>
+        <p class="sub">Run of ${day(d.date)}, ${STATE_WORD[d.state].toLowerCase()}${schedules[slugOf(d.id)] ? `. Runs again every ${esc(schedules[slugOf(d.id)].day)} at ${esc(schedules[slugOf(d.id)].time)}` : ''}</p>
         ${d.icp.headline ? `<p class="headline">${rich(d.icp.headline)}</p>` : ''}
       </div>
       ${postmark(d)}
@@ -630,6 +744,7 @@ async function refreshRun() {
 async function refreshState() {
   const s = await api('state');
   runs = s.runs;
+  schedules = s.schedules || {}; canSchedule = !!s.can_schedule;
   if (JSON.stringify(s.keys) !== JSON.stringify(keyState)) checks = null;   // a key changed: the old check no longer holds
   const first = !('apollo' in keyState);
   keyState = s.keys; sdkVersion = s.sdk; claudeVia = s.claude;
@@ -656,7 +771,42 @@ function select(id) {
 
 function showError(e) { $('#newMsg').textContent = e.message; }
 
-$('#runs').addEventListener('click', e => { const b = e.target.closest('button[data-id]'); if (b) select(b.dataset.id); });
+$('#runs').addEventListener('click', e => {
+  const more = e.target.closest('button.more');
+  if (more) { menuFor === more.dataset.menu ? closeMenu() : (closeMenu(), openMenu(more)); return; }
+  const b = e.target.closest('button.pick');
+  if (b) select(b.dataset.id);
+});
+$('#runMenu').addEventListener('click', async e => {
+  const b = e.target.closest('button[data-do]');
+  if (!b) return;
+  const r = runs.find(x => x.id === menuFor);
+  closeMenu();
+  if (!r) return;
+  if (b.dataset.do === 'delete') deleteRun(r);
+  else if (b.dataset.do === 'schedule') openSchedule(r);
+  else if (b.dataset.do === 'unschedule') saveSchedule({company: r.company, off: true}).catch(showError);
+});
+$('#runMenu').addEventListener('keydown', e => {
+  const items = [...$('#runMenu').querySelectorAll('button:not(:disabled)')], i = items.indexOf(document.activeElement);
+  if (e.key === 'Escape') { e.preventDefault(); closeMenu(true); }
+  else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    e.preventDefault();
+    items[(i + (e.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length].focus();
+  } else if (e.key === 'Tab') closeMenu();
+});
+document.addEventListener('click', e => { if (menuFor && !e.target.closest('#runMenu, button.more')) closeMenu(); });
+window.addEventListener('resize', () => closeMenu());
+$('.side').addEventListener('scroll', () => closeMenu());
+$('#schedCancel').addEventListener('click', () => $('#schedDialog').close());
+$('#schedForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  const f = e.target;
+  try {
+    await saveSchedule({company: schedTarget.company, domain: schedTarget.domain, day: f.day.value, time: f.time.value});
+    $('#schedDialog').close();
+  } catch (err) { $('#schedMsg').textContent = err.message; }
+});
 
 $('#main').addEventListener('click', async e => {
   const act = e.target.closest('[data-act]');

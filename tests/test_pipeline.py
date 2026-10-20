@@ -11,7 +11,7 @@ from unittest import mock
 os.environ["OUTBOUND_TODAY"] = "2026-10-18"
 
 from agent import apollo, clay, common, lemlist, llm, pipeline, rest  # noqa: E402
-from test_agent import ENRICHMENT, ICP, ORGS, SEQ  # noqa: E402
+from test_agent import ENRICHMENT, ICP, ORGS, SEQ, read_xlsx  # noqa: E402
 
 FULL_ICP = copy.deepcopy(ICP)
 FULL_ICP["customers"].append({"name": "Airwallex", "domain": "airwallex.com"})
@@ -183,6 +183,12 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual({lead["email"] for lead in lem.leads}, {"ana@alpha.dev", "ana@deltapay.com"})
             csv_text = common.read_text(os.path.join(run, common.LEADS_CSV))
             self.assertIn("ana@deltapay.com", csv_text)
+            book = read_xlsx(os.path.join(run, common.ACCOUNTS_XLSX))
+            self.assertEqual(list(book), ["Top 2", "Top 5", "All 9", "How they were picked"])
+            outcomes = {r[1]: r[4] for r in book["Top 5"][1:]}
+            self.assertEqual(outcomes["Beta"], "Out after research: tied to a competitor")
+            self.assertEqual(outcomes["Delta Pay"], "Top 10, #2")
+            self.assertIn("accounts.xlsx", summary)
             meta = common.load(os.path.join(run, common.RUN))
             self.assertEqual(meta["credits"], {"apollo_search": 1, "apollo_reveal": 2})
             self.assertIn("only 2 accounts", summary)
@@ -210,6 +216,19 @@ class PipelineTests(unittest.TestCase):
             self.assertIn("Series B", claude.prompts["enrich 1"])
             self.assertEqual(common.load(os.path.join(run, common.ENRICHMENT))["source"], "clay+web")
             self.assertEqual(common.load(os.path.join(run, common.RUN))["clay"]["credits_used"], 10)
+
+    def test_api_key_in_the_function_id_is_refused(self):
+        env = {"CLAY_ROUTINE_ID": "clay_secret_123", "CLAY_API_KEY": "clay_secret_123"}
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, env):
+            run, _, _ = pipeline.new_run("Acme", "acme.dev", runs=os.path.join(tmp, "runs"),
+                                         companies=os.path.join(tmp, "companies"))
+            cl = FakeClay()
+            pipeline.Pipeline(run, FakeClaude(), FakeApollo(), None, companies=os.path.join(tmp, "companies"),
+                              log=lambda *a: None, clay=cl).all()
+            self.assertEqual(cl.runs, [])
+            meta = common.read_text(os.path.join(run, common.RUN))
+            self.assertIn("function ID holds a Clay API key", meta)
+            self.assertNotIn("clay_secret", meta + common.read_text(os.path.join(run, common.REPORT)))
 
     def test_stops_when_someone_else_sends(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -396,6 +415,15 @@ class ClientTests(unittest.TestCase):
         with mock.patch.object(rest, "request", side_effect=answers) as req:
             self.assertEqual(cl.check(), "the key works for Kevin's workspace, 87 credits left")
         self.assertEqual(req.call_args.args[2], {"clay-api-key": "k"})
+        with mock.patch.dict(os.environ, {"CLAY_ROUTINE_ID": "clay_abc"}):
+            with mock.patch.object(rest, "request", side_effect=rest.HTTPError(401, "{}", "u")), \
+                    self.assertRaises(SystemExit) as e:
+                cl.check()
+            self.assertIn("make a new one", str(e.exception))
+            self.assertIn("function ID holds a Clay API key", str(e.exception))
+            with mock.patch.object(rest, "request", side_effect=[{}, {"balance": 5}]), self.assertRaises(SystemExit) as e:
+                cl.check()
+            self.assertTrue(str(e.exception).startswith("the key works, 5 credits left, but"))
         answers = [{"routine_run_id": "r1", "status": "in_progress"},
                    {"routine_run_id": "r1", "status": "in_progress", "total": 2, "finished": 1},
                    {"routine_run_id": "r1", "status": "complete", "cursor": "c2",
