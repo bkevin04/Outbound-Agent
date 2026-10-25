@@ -1,7 +1,7 @@
-"""Stage 7: turn Apollo's bulk match (the 10 revealed champions) into champions.json.
+"""Stage 7: turn Apollo's bulk match (the revealed champions) into champions.json.
 
 Each match is tied to its account by the organization's domain, falling back to the email's domain. A match whose
-organization is not one of the 10 is the wrong person and is left out. An email on another domain than the account's
+organization is not one of the picks is the wrong person and is left out. An email on another domain than the account's
 (Gravitee's people write from graviteesource.com) is kept when Apollo ties the person to the account, with a note."""
 from .common import extract_json, norm_domain
 
@@ -37,7 +37,7 @@ def build(text, top, old=None):
         if dom not in domains:
             dom = email_dom if email_dom in domains else dom
         if dom not in domains:
-            problems.append(f"{m.get('name')} ({m.get('title')}) works at {org.get('name')}, not one of the 10: left out")
+            problems.append(f"{m.get('name')} ({m.get('title')}) works at {org.get('name')}, not one of the picks: left out")
             continue
         notes = []
         if email and email_dom != dom:

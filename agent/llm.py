@@ -1,4 +1,4 @@
-"""Claude for the judgement steps: research, the ICP, triage, enrichment, the 10, the champions and the emails.
+"""Claude for the judgement steps: research, the ICP, triage, enrichment, the picks, the champions and the emails.
 
 Two ways to reach Claude, picked with OUTBOUND_CLAUDE:
 - "code" (the default): Claude Code (`claude -p`) on your Claude plan, signed in the way Claude Code already is.

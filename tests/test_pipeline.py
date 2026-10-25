@@ -67,7 +67,7 @@ class FakeClaude:
                                  for a in _accounts(prompt)}}
         if step.startswith("trigger"):
             return {"triggers": []}
-        if step == "the 10":
+        if step == "the picks":
             out = {}
             for a in _accounts(prompt):
                 if a["domain"] == "beta.io":
@@ -187,7 +187,7 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(list(book), ["Top 2", "Top 5", "All 9", "How they were picked"])
             outcomes = {r[1]: r[4] for r in book["Top 5"][1:]}
             self.assertEqual(outcomes["Beta"], "Out after research: tied to a competitor")
-            self.assertEqual(outcomes["Delta Pay"], "Top 10, #2")
+            self.assertEqual(outcomes["Delta Pay"], "Picked, #2")
             self.assertIn("accounts.xlsx", summary)
             meta = common.load(os.path.join(run, common.RUN))
             self.assertEqual(meta["credits"], {"apollo_search": 1, "apollo_reveal": 2})
@@ -201,6 +201,65 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(ap.paid, [("search", 1), ("reveal", 2)])
             self.assertEqual(len(claude.steps), before)
             self.assertEqual(len(lem.leads), 2)
+
+    def test_seat_with_no_champion_goes_to_the_next_account(self):
+        class NoOneAtDelta(FakeApollo):
+            def search_people(self, domain, titles, seniorities=None, verified=True, per_page=10):
+                return [] if domain == "deltapay.com" else super().search_people(domain, titles, seniorities, verified)
+
+        class GammaTrigger(FakeClaude):
+            def answer(self, step, prompt):
+                if step == "trigger gamma.com":
+                    return {"triggers": [{"type": "launch", "date": "2026-09-15", "text": "Launched v3",
+                                          "url": "https://x/g3"}]}
+                return super().answer(step, prompt)
+
+        pick_top = pipeline.sc.pick_top
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(pipeline.sc, "pick_top", lambda ranked, icp: pick_top(ranked, icp, n=2)):
+            run, _, _ = pipeline.new_run("Acme", "acme.dev", runs=os.path.join(tmp, "runs"),
+                                         companies=os.path.join(tmp, "companies"))
+            lem, ap = FakeLemlist(), NoOneAtDelta()
+            pipeline.Pipeline(run, GammaTrigger(), ap, lem, companies=os.path.join(tmp, "companies"),
+                              log=lambda *a: None).all()
+            top = common.load(os.path.join(run, common.TOP10))
+            self.assertEqual([t["domain"] for t in top], ["alpha.dev", "gamma.com"])   # gamma took Delta's seat
+            self.assertEqual({lead["email"] for lead in lem.leads}, {"ana@alpha.dev", "ana@gamma.com"})
+            self.assertEqual(ap.paid, [("search", 1), ("reveal", 2)])   # nobody revealed twice
+            icp = common.load(os.path.join(run, common.ICP))
+            self.assertIn("no champion at Apollo", icp["exclude"]["why"]["deltapay.com"])
+
+    def test_top_up_adds_only_the_new_leads(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            lem = FakeLemlist()
+            run, pipe, claude, ap, _ = self.run_all(tmp, lem)
+            # Pretend Delta Pay came in after the first load: its lead, reveal and sequence entry are new.
+            for name in (common.CHAMPIONS, pipeline.PICKS, pipeline.APOLLO_MATCH_RAW):
+                obj = common.load(os.path.join(run, name))
+                key = {common.CHAMPIONS: "accounts", pipeline.PICKS: "picks"}.get(name)
+                if key:
+                    obj[key].pop("deltapay.com")
+                else:
+                    obj = {"matches": [m for m in obj["matches"] if m["id"] != "p-deltapay.com"], "credits_consumed": 1}
+                common.save(os.path.join(run, name), obj)
+            seq = common.load(os.path.join(run, common.SEQUENCE))
+            seq["leads"].pop("deltapay.com")
+            common.save(os.path.join(run, common.SEQUENCE), seq)
+            res = common.load(os.path.join(run, common.LEMLIST_RESULT))
+            res["results"] = [r for r in res["results"] if r["email"] != "ana@deltapay.com"]
+            common.save(os.path.join(run, common.LEMLIST_RESULT), res)
+            meta = common.load(os.path.join(run, common.RUN))
+            meta["credits"]["apollo_reveal"] = 1
+            common.save(os.path.join(run, common.RUN), meta)
+            lem.leads, ap.paid = [], []
+            pipeline.Pipeline(run, claude, ap, lem, companies=os.path.join(tmp, "companies"), log=lambda *a: None).all()
+            self.assertEqual(ap.paid, [("reveal", 1)])
+            self.assertEqual([lead["email"] for lead in lem.leads], ["ana@deltapay.com"])
+            self.assertEqual(len(lem.steps), 3)   # the campaign's steps stay
+            self.assertIn("templates are already in lemlist", claude.prompts["sequence"])
+            res = common.load(os.path.join(run, common.LEMLIST_RESULT))
+            self.assertEqual(len(res["results"]), 2)
+            self.assertEqual(common.load(os.path.join(run, common.RUN))["credits"]["apollo_reveal"], 2)
 
     def test_clay_feeds_the_research(self):
         with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, {"CLAY_ROUTINE_ID": "function:t_1"}):
@@ -377,13 +436,14 @@ class ClientTests(unittest.TestCase):
     def test_apollo_budget(self):
         ap = apollo.Apollo("k")
         with mock.patch.object(rest, "request", return_value={"matches": []}) as req:
-            ap.bulk_match(["x"] * 10, {"apollo_search": 1})
-            self.assertEqual(json.dumps(req.call_args.kwargs["body"]).count('"id"'), 10)
+            ap.bulk_match(["x"] * 10, {"apollo_search": 1})   # one reveal per lead, 5 at most
+            self.assertEqual(json.dumps(req.call_args.kwargs["body"]).count('"id"'), 5)
             self.assertTrue(req.call_args.kwargs["paid"])
+            self.assertEqual(apollo.BUDGET, 6)
             with self.assertRaises(SystemExit):
-                ap.bulk_match(["x"] * 10, {"apollo_search": 1, "apollo_reveal": 1})
+                ap.bulk_match(["x"] * 5, {"apollo_search": 1, "apollo_reveal": 1})
             with self.assertRaises(SystemExit):
-                ap.search_companies({}, {"apollo_search": 1, "apollo_reveal": 10})
+                ap.search_companies({}, {"apollo_search": 1, "apollo_reveal": 5})
 
     def test_connection_checks(self):
         with mock.patch.dict(os.environ, {"OUTBOUND_CLAUDE": "api"}, clear=True):

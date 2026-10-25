@@ -1,12 +1,14 @@
 """Apollo's REST API for the three calls a run makes, with Kevin's budget enforced in code before every paid call:
-at most 11 credits a run (1 company search + at most 10 reveals, approved 18 Oct 2026). There is no method for a
+at most 6 credits a run (1 company search + at most 5 reveals, one per lead; Kevin approved up to 11 on 18 Oct 2026
+and cut the run to 5 leads on 20 Oct). There is no method for a
 phone reveal, a waterfall, an organization enrich or job postings, so the run cannot spend credits on them."""
 import os
 
+from . import common as c
 from . import rest
 
 BASE = "https://api.apollo.io/api/v1"
-BUDGET = 11
+BUDGET = 1 + c.LEADS
 
 
 def spent(credits):
@@ -50,9 +52,9 @@ class Apollo:
                 for p in res.get("people") or [] if p.get("id")]
 
     def bulk_match(self, ids, credits):
-        """Reveal the champions' work emails: 1 credit per match, at most 10. Every reveal flag stays at its default
+        """Reveal the champions' work emails: 1 credit per match, at most one per lead. Every reveal flag stays at its default
         (off): no personal emails, no phones, no waterfall."""
-        ids = list(ids)[:10]
+        ids = list(ids)[:c.LEADS]
         self._need(credits, len(ids), f"revealing {len(ids)} champions")
         return self._call("POST", "/people/bulk_match", body={"details": [{"id": i} for i in ids]}, paid=True)
 

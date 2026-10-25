@@ -1,4 +1,4 @@
-"""Stages 4 and 6: score the long list, so "why these 10" has an answer you can show.
+"""Stages 4 and 6: score the long list, so "why these leads" has an answer you can show.
 
 Two passes, both from the weights in icp.json["scoring"]:
 - pre:   firmographics only (size, HQ, keywords, segment, funding, headcount growth from Apollo, plus the
@@ -6,10 +6,13 @@ Two passes, both from the weights in icp.json["scoring"]:
          to pick the shortlist that gets enriched (Clay, or web research when Clay is not connected).
 - final: firmographics + the enrichment signals (a dated trigger, docs/support tech, community channels,
          whether they already run an AI assistant, relevant hiring, Clay's fit score).
-The top 10 need a trigger from the last `trigger_max_age_days` days with a source URL, and no segment may take
-more than its `max_in_top10` seats, so the 10 mix segments the way the ICP does."""
+The top accounts (common.LEADS) need a trigger from the last `trigger_max_age_days` days with a source URL, and no segment may take
+more than its share of the seats (`max_in_top10`, scaled to the run's size), so the picks mix segments the way the
+ICP does."""
+import math
 import re
 
+from . import common as c
 from .common import parse_date, today
 
 DEFAULTS = {
@@ -22,7 +25,6 @@ DEFAULTS = {
     "hiring_keywords": [],
     "trigger_max_age_days": 183,
     "segment_cap": 4,
-    "shortlist": 25,
     # 6-month headcount growth in percent -> points, first threshold met wins; shrinking scores growth_negative
     "growth_6m_points": [[20, 3], [10, 2], [3, 1]],
     "growth_negative": -1,
@@ -280,25 +282,39 @@ def rank_final(longlist, enrichment, icp):
     return rows
 
 
-def pick_top(ranked, icp, n=10):
-    """Best n with a dated trigger, at most max_in_top10 per segment. Short of n: fill with the best untriggered
-    accounts, flagged needs_trigger, so the agent researches them or swaps them before going on."""
+def cap(seg_cap, n):
+    """A segment's seats when n accounts are picked: `max_in_top10` is written for 10, so 4 of 10 is 2 of 5."""
+    return max(1, math.ceil(seg_cap * n / 10))
+
+
+def pick_top(ranked, icp, n=c.LEADS):
+    """Best n with a dated trigger, at most max_in_top10 per segment. Short of n: the next best with a trigger take
+    the seats over their segment's cap (a full list beats the mix), then the best untriggered accounts, flagged
+    needs_trigger, so the agent researches them or swaps them before going on."""
     caps = {s["key"]: s.get("max_in_top10", _cfg(icp, "segment_cap")) for s in icp.get("segments") or []}
-    used, top = {}, []
-    for r in ranked:
+    ready = [r for r in ranked if r.get("trigger") and r.get("enriched") and r.get("segment") is not None]
+    used, top, picked = {}, [], set()
+    for r in ready:
         if len(top) == n:
             break
-        if not r.get("trigger") or not r.get("enriched"):
-            continue
-        seg = r.get("segment")
-        if seg is None or used.get(seg, 0) >= caps.get(seg, _cfg(icp, "segment_cap")):
+        seg = r["segment"]
+        if used.get(seg, 0) >= cap(caps.get(seg, _cfg(icp, "segment_cap")), n):
             continue
         used[seg] = used.get(seg, 0) + 1
         top.append(r)
+        picked.add(r["domain"])
+    for r in ready:
+        if len(top) == n:
+            break
+        if r["domain"] not in picked:
+            top.append(r)
+            picked.add(r["domain"])
+    order = {r["domain"]: i for i, r in enumerate(ranked)}
+    top.sort(key=lambda r: order[r["domain"]])
     for r in ranked:
         if len(top) == n:
             break
-        if r not in top and r.get("segment") is not None:
+        if r["domain"] not in picked and r.get("segment") is not None:
             top.append(dict(r, needs_trigger=True))
     lookalike = {s["key"]: s.get("lookalike") for s in icp.get("segments") or []}
     out = []
@@ -317,8 +333,8 @@ def check_top10(top, company_name, customer_names=None):
     stage. The lookalike starts as the segment's and may be set per account, but must be a real customer."""
     out = []
     customers = {n.lower() for n in customer_names or []}
-    if len(top) != 10:
-        out.append(f"top10 has {len(top)} accounts, needs 10")
+    if len(top) != c.LEADS:
+        out.append(f"top10 has {len(top)} accounts, needs {c.LEADS}")
     for a in top:
         tag = f"#{a.get('rank')} {a.get('name')}"
         if a.get("needs_trigger") or not a.get("trigger"):

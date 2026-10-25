@@ -1,6 +1,6 @@
 # The sequence: Kevin's three touches, built for lemlist
 
-Kevin's outbound is three emails to one champion. The agent writes the same three touches for all ten champions: the structure and the company-level sentences go into the lemlist steps once, and what changes per account goes into lemlist custom variables on each lead. lemlist fills them in, so every email is personal and nothing is pasted per lead.
+Kevin's outbound is three emails to one champion. The agent writes the same three touches for all five champions: the structure and the company-level sentences go into the lemlist steps once, and what changes per account goes into lemlist custom variables on each lead. lemlist fills them in, so every email is personal and nothing is pasted per lead.
 
 ## The touches
 

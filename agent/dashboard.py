@@ -1,7 +1,8 @@
 """A local dashboard for the agent: `python3 -m agent dashboard` opens it at http://127.0.0.1:8765.
 
-Start a run for a company, watch the stages and the log as it goes, and read the 10 leads and their emails. Delete a
-run, or have a company's run start again every week (agent/schedule.py). A run is the same `python -m agent run` in a
+Start a run for a company, watch the stages and the log as it goes, and read the leads and their emails. Group
+runs into projects (agent/projects.py), delete a run, or have a company's run start again every week
+(agent/schedule.py). A run is the same `python -m agent run` in a
 subprocess, its output in run.log and its process id in run.pid in the run folder, so a run started here, by a
 schedule or from the terminal through `agent scheduled` is a run like any other. The server listens on 127.0.0.1 only and every API call needs the token handed to the page,
 because the run folders hold real people's emails and a run spends Apollo credits."""
@@ -19,9 +20,11 @@ import urllib.parse
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+from . import apollo as apollo_mod
 from . import common as c
 from . import llm
 from . import pipeline as pl
+from . import projects as pj
 from . import report as rep
 from . import schedule as sch
 from . import sequence as sq
@@ -89,6 +92,7 @@ class Runs:
     def __init__(self, runs_dir=c.RUNS, py=None):
         self.dir, self.py = runs_dir, py or python()
         self.procs, self.lock = {}, threading.Lock()
+        self.projects = pj.Projects(self.dir)
 
     def path(self, rid):
         if not re.fullmatch(r"[a-z0-9-]+/\d{4}-\d{2}-\d{2}", rid or ""):
@@ -124,9 +128,12 @@ class Runs:
                 out.append({"id": rid, "company": meta.get("company"), "domain": meta.get("domain"), "date": date,
                             "state": self.state(rid, meta),
                             "stages_done": len(meta.get("stages_done") or []), "leads": len(top)})
+        where = self.projects.of([r["id"] for r in out])
+        for r in out:
+            r["project"] = where[r["id"]]
         return sorted(out, key=lambda r: (r["date"], r["company"] or ""), reverse=True)
 
-    def start(self, company, domain=None, date=None, note="started from the dashboard"):
+    def start(self, company, domain=None, date=None, note="started from the dashboard", project=None):
         slug = c.slugify(company)
         date = date or c.today().isoformat()
         rid = f"{slug}/{date}"
@@ -144,6 +151,8 @@ class Runs:
                                                env=os.environ.copy())
             log.close()
             c.write_text(os.path.join(folder, c.PID), str(self.procs[rid].pid))
+        if project:
+            self.projects.move(rid, project)
         return rid
 
     def delete(self, rid):
@@ -157,6 +166,7 @@ class Runs:
         with self.lock:
             shutil.rmtree(folder)
             self.procs.pop(rid, None)
+            self.projects.forget(rid)
             parent = os.path.dirname(folder)
             if not os.listdir(parent):
                 os.rmdir(parent)
@@ -307,7 +317,11 @@ def save_keys(values, path=c.ENV):
 
 def make_handler(runs, token, sdk, scheduler=None):
     scheduler = scheduler or sch.Scheduler(runs.dir, runs.py)
-    page = open(os.path.join(HERE, "dashboard.html"), encoding="utf-8").read().replace("__TOKEN__", token)
+    with open(os.path.join(HERE, "dashboard.html"), encoding="utf-8") as f:
+        page = f.read()
+    for k, v in {"__TOKEN__": token, "__LEADS__": c.LEADS, "__SHORTLIST__": c.SHORTLIST_SIZE,
+                 "__CREDITS__": apollo_mod.BUDGET}.items():
+        page = page.replace(k, str(v))
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *a):
@@ -353,7 +367,8 @@ def make_handler(runs, token, sdk, scheduler=None):
             rid = (q.get("id") or [""])[0]
             if method == "GET" and path == "state":
                 return self._send(200, {"keys": keys_state(), "sdk": sdk, "claude": claude_backend(),
-                                        "runs": runs.list(), "schedules": scheduler.all(),
+                                        "runs": runs.list(), "projects": runs.projects.all(),
+                                        "schedules": scheduler.all(),
                                         "can_schedule": scheduler.supported()})
             if method == "GET" and path == "run":
                 return self._send(200, runs.detail(rid))
@@ -381,10 +396,29 @@ def make_handler(runs, token, sdk, scheduler=None):
                 if api and (not sdk or int(sdk.split(".")[0]) < 1):
                     raise ValueError("the anthropic package is missing or too old: run pip install -r requirements.txt")
                 date = b.get("date") if b.get("resume") else None
-                rid = runs.start(b["company"].strip(), (b.get("domain") or "").strip() or None, date)
+                rid = runs.start(b["company"].strip(), (b.get("domain") or "").strip() or None, date,
+                                 project=(b.get("project") or "").strip() or None)
                 return self._send(200, {"id": rid})
             if method == "POST" and path == "check":
                 return self._send(200, {"checks": check_keys(runs.py)})
+            if method == "POST" and path == "projects":
+                b, pr = self._body(), runs.projects
+                act = b.get("action")
+                if act == "create":
+                    p = pr.create(b.get("name"))
+                    if b.get("run"):
+                        runs.path(b["run"])     # a real run id, or ValueError
+                        pr.move(b["run"], p["id"])
+                elif act == "rename":
+                    pr.rename(b.get("id"), b.get("name"))
+                elif act == "delete":
+                    pr.delete(b.get("id"))
+                elif act == "move":
+                    runs.path(b.get("run"))
+                    pr.move(b["run"], b.get("id") or "")
+                else:
+                    raise ValueError("unknown project action")
+                return self._send(200, {"projects": pr.all(), "runs": runs.list()})
             if method == "POST" and path == "delete":
                 runs.delete(self._body().get("id"))
                 return self._send(200, {"runs": runs.list()})
@@ -418,7 +452,7 @@ def serve(port=8765, open_browser=True):
     token = secrets.token_urlsafe(24)
     server = ThreadingHTTPServer(("127.0.0.1", port), make_handler(runs, token, sdk_version(runs.py)))
     url = f"http://127.0.0.1:{port}/"
-    print(f"Outbound Agent dashboard: {url}  (Ctrl+C to stop; runs started here keep going)")
+    print(f"Kevin Outbound Agent dashboard: {url}  (Ctrl+C to stop; runs started here keep going)")
     if open_browser:
         threading.Timer(0.5, webbrowser.open, [url]).start()
     try:

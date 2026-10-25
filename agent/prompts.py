@@ -4,7 +4,7 @@ import datetime
 import json
 import os
 
-from .common import ROOT
+from .common import LEADS, ROOT
 
 REFS = os.path.join(ROOT, ".claude", "skills", "outbound-agent", "references")
 
@@ -124,7 +124,7 @@ def trigger(icp, account, today):
     cutoff = (today - datetime.timedelta(days=183)).isoformat()
     return f"""Step: find one dated trigger for {account["name"]} ({account["domain"]}).
 
-It is in {icp["company"]["name"]}'s top 10 but has no trigger yet. Search for news on or after {cutoff}: funding, a launch, a new leader, hiring, an acquisition, a partnership, an expansion. Each trigger needs type, date (YYYY-MM-DD), text (one plain sentence) and url. None in the window: answer an empty list.
+It is in {icp["company"]["name"]}'s top {LEADS} but has no trigger yet. Search for news on or after {cutoff}: funding, a launch, a new leader, hiring, an acquisition, a partnership, an expansion. Each trigger needs type, date (YYYY-MM-DD), text (one plain sentence) and url. None in the window: answer an empty list.
 
 JSON: {{"triggers": []}}"""
 
@@ -132,7 +132,7 @@ JSON: {{"triggers": []}}"""
 def write_top10(icp, accounts):
     c = icp["company"]["name"]
     customers = [{k: cu.get(k) for k in ("name", "segment", "result")} for cu in icp.get("customers") or []]
-    return f"""Step: the 10 accounts for {c}. For each account below, either
+    return f"""Step: the {LEADS} accounts for {c}. For each account below, either
 - leave it out: {{"exclude": "<reason>"}} when its notes tie it to a competitor of {c} (the same team runs a competitor, say), it is already a customer, or it is not the ICP's buyer after all; or
 - write:
   - "lookalike": the closest real customer of {c} from the list (a fintech API gets the fintech customer), exactly as the list spells it.
@@ -159,15 +159,32 @@ JSON: {{"picks": {{"<domain>": {{"id": "<apollo person id>", "reason": "a few wo
 {chr(10).join(_j(a) for a in accounts)}"""
 
 
-def sequence(icp, accounts):
+def sequence(icp, accounts, touches=None):
     co = icp["company"]
+    if touches:
+        return f"""Step: add leads to sequence.json, Kevin's 3-touch sequence for {co["name"]}, sent as {co["name"]}'s BDR to the champion at each account.
+
+{ref("sequence.md")}
+
+The templates are already in lemlist and stay as they are: write only the leads (the variables the templates use) for the accounts below, in the same voice. Pick the proof for each account from the proof points, the customer closest to that account.
+
+The program renders their emails, lints them for Kevin's voice and sends back what fails.
+
+JSON: {{"leads": {{"<domain>": {{...the variables...}}}}}}
+
+The templates: {_j(touches)}
+The company: {_j({k: co.get(k) for k in ("name", "one_liner", "city", "remote", "ceo_first_name")})}
+Proof points: {_j(icp.get("proof_points") or [])}
+
+The accounts (leads keys are these domains):
+{chr(10).join(_j(a) for a in accounts)}"""
     return f"""Step: write sequence.json, Kevin's 3-touch sequence for {co["name"]}, sent as {co["name"]}'s BDR to the champion at each account.
 
 {ref("sequence.md")}
 
 Write it for {co["name"]}: the company-level sentences (what {co["name"]} does and how it works, "We're in {co.get("city") or "..."}", {co.get("ceo_first_name") or "the CEO"} as the CEO in touch 3) go in the templates; everything that changes per account goes in that account's variables. Pick the proof for each account from the proof points, the customer closest to that account. Then read three of the emails out loud as Kevin: anything that sounds like a press release, rewrite it plainer.
 
-The program renders all 30 emails, lints them for Kevin's voice and sends back what fails.
+The program renders every email (3 per account), lints them for Kevin's voice and sends back what fails.
 
 The company: {_j({k: co.get(k) for k in ("name", "one_liner", "city", "remote", "ceo_first_name")})}
 Proof points: {_j(icp.get("proof_points") or [])}

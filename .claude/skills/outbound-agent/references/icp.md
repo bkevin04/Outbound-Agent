@@ -29,7 +29,7 @@ The first half is the ICP in Kevin's structure. The second half is what the agen
       {"title": "Tech stack & channels", "body": "..."},
       {"title": "Pain point: {name}", "body": "..."},
       {"title": "Trigger in the last 6 months", "body": "..."},
-      {"title": "10 specific accounts", "body": "A {champion} who already has the problem on their desk!"}
+      {"title": "5 specific accounts", "body": "A {champion} who already has the problem on their desk!"}
     ]
   },
   "segments": [                                   // mix them the way the ICP does
@@ -52,7 +52,7 @@ The first half is the ICP in Kevin's structure. The second half is what the agen
     "trigger_max_age_days": 183,
     "hiring_keywords": ["developer advocate", "developer relations", "support engineer", "technical writer"],
     "growth_6m_points": [[20, 3], [10, 2], [3, 1]], "growth_negative": -1,
-    "has_ai_assistant": -3, "no_ai_assistant": 2, "public_company": -2, "keyword_cap": 8, "shortlist": 30
+    "has_ai_assistant": -3, "no_ai_assistant": 2, "public_company": -2, "keyword_cap": 8
   },
   "champion": {
     "titles": ["head of developer relations", "head of developer experience", "head of support"],
@@ -69,7 +69,7 @@ The first half is the ICP in Kevin's structure. The second half is what the agen
 Scoring, in plain words (`agent/score.py`):
 - Firmographics (all ~100, after the triage): 6-month headcount growth ≥20% +3, ≥10% +2, ≥3% +1, shrinking -1; in the size range +2 and in the sweet spot +1 more, out of range -4; HQ in a target country +1, elsewhere -2; public company -2; keyword hits by weight (capped); negative keywords; no segment matched -1; a funding round in the last 183 days +2 (last year +1).
 - Signals (the enriched shortlist): the best dated trigger by type weight and recency (≤45 days ×1, ≤90 ×0.8, ≤183 ×0.6) plus 0.5 per extra trigger (max +1); tech by weight (capped); community channels +1 each (max 2); AI assistant already on the docs -3, checked and none +2; relevant hiring +1 each (max 2); Clay fit score / 25.
-- The 10: best total with a dated trigger, at most `max_in_top10` per segment.
+- The 5: best total with a dated trigger, at most `max_in_top10` per segment (written for 10 seats, so it is halved and rounded up for 5; seats the caps would leave empty go to the next accounts with a trigger).
 
 ## enrichment.json
 
@@ -87,7 +87,7 @@ Scoring, in plain words (`agent/score.py`):
       "ai_assistant": "no",          // yes | no | unknown
       "ai_assistant_vendor": "",     // the vendor's name, or own
       "ai_assistant_url": "https://docs.initech.io",
-      "existing_customer": false,    // true when the assistant is the client's own product: dropped from the 10
+      "existing_customer": false,    // true when the assistant is the client's own product: dropped from the picks
       "hiring": ["Developer Advocate"], "hiring_url": "https://...",
       "hq_city": "San Francisco",
       "fit_score": 82,               // Clay only, 0-100

@@ -1,5 +1,5 @@
-"""Stage 10: the deliverable. leads.csv (the 10 leads with champion emails), report.md (the funnel in numbers,
-the 10 accounts, credits, campaign state) and accounts.xlsx (the 10, the 30 researched and all 100 from Apollo, with
+"""Stage 10: the deliverable. leads.csv (the leads with champion emails), report.md (the funnel in numbers,
+the accounts picked, credits, campaign state) and accounts.xlsx (the picks, the shortlist researched and all 100 from Apollo, with
 how each one was scored and how far it got), plus emails.docx and report.docx for Word. All of them stay in the run
 folder, which git ignores: they hold real emails."""
 import csv
@@ -68,8 +68,8 @@ def to_md(run, icp, longlist, shortlist, enrichment, table, lemlist_result, tria
         + (f" ({', '.join(d['name'] for d in triage_dropped)})" if triage_dropped else ""),
         f"- Shortlisted on firmographics: {len(shortlist or [])}",
         f"- Enriched with {(enrichment or {}).get('source', '—')}: {len(enr)}, {with_trigger} with a dated trigger",
-        "- Top 10 by fit score, at most a few per segment", "",
-        "## The 10 accounts", "",
+        f"- Top {len(table)} by fit score, at most a few per segment", "",
+        f"## The {len(table)} accounts", "",
         "| # | Account | Industry | Why they fit | Trigger | Champion | Email | lemlist |",
         "|---|---|---|---|---|---|---|---|",
     ]
@@ -114,8 +114,8 @@ def _uses(e):
 
 
 def workbook(folder):
-    """The run as a workbook people can read and filter: the 10 in the accounts table (#, Account, Type, Why they fit,
-    Trigger, Champion, Contact, then the detail), the 30 researched, every company Apollo found with how far it got
+    """The run as a workbook people can read and filter: the picks in the accounts table (#, Account, Type, Why they fit,
+    Trigger, Champion, Contact, then the detail), the shortlist researched, every company Apollo found with how far it got
     and why, and how they were picked. Read from the run folder's files. -> the sheets for xlsx.write"""
     def load(name, default):
         return c.load_optional(os.path.join(folder, name), default) or default
@@ -131,14 +131,14 @@ def workbook(folder):
     final = {r["domain"]: r for r in ranked}
     picked = {t["domain"]: t for t in top}
     segments = icp.get("segments") or []
-    caps = {s["key"]: s.get("max_in_top10", sc._cfg(icp, "segment_cap")) for s in segments}
+    caps = {s["key"]: sc.cap(s.get("max_in_top10", sc._cfg(icp, "segment_cap")), c.LEADS) for s in segments}
     labels = {s["key"]: s.get("label") or s["key"] for s in segments}
     worst = max((final[d]["rank"] for d in picked if d in final), default=None)
 
     def outcome(d):
         """How far an account got and why it stopped there. -> (text, row mark)"""
         if d in picked:
-            return (f"Top 10, #{picked[d]['rank']}"
+            return (f"Picked, #{picked[d]['rank']}"
                     + (" (still needs a dated trigger)" if picked[d].get("needs_trigger") else "")), "pick"
         drop = (tri.get(d) or {}).get("drop")
         if drop:
@@ -157,14 +157,14 @@ def workbook(folder):
             return "Researched: fits no ICP segment", None
         if worst is not None and r["rank"] < worst:
             seg = r["segment"]
-            return f"Researched: {labels.get(seg, seg)} already had its {caps.get(seg)} seats in the 10", None
-        return f"Researched: scored below the 10 (#{r['rank']} overall)", None
+            return f"Researched: {labels.get(seg, seg)} already had its {caps.get(seg)} seats in the {c.LEADS}", None
+        return f"Researched: scored below the {c.LEADS} (#{r['rank']} overall)", None
 
     def describe(d):
         return ((enr.get(d) or {}).get("description") or (tri.get(d) or {}).get("description")
                 or (accounts.get(d) or {}).get("short_description") or "")
 
-    # The 10: the accounts table, then the detail behind each line.
+    # The picks: the accounts table, then the detail behind each line.
     ten, table = [], rows(top, champions, lem)
     for r, t in zip(table, top):
         champ = f"{r['champion']} ({r['champion_title']})" if r["champion"] and r["champion_title"] else r["champion"]
@@ -189,7 +189,7 @@ def workbook(folder):
                        r.get("firmographic_score", p.get("score")), r.get("signal_score"), r.get("score"),
                        "; ".join(r.get("reasons") or p.get("reasons") or []), _site(d)])
 
-    # Every company the search found, from the 10 down to the ones left out before any scoring.
+    # Every company the search found, from the picks down to the ones left out before any scoring.
     def stage(d):
         if d in picked:
             return 0, picked[d]["rank"]
@@ -296,7 +296,7 @@ def _how(meta, icp, longlist, sl, enrichment, top, table, short, caps, company):
         ["Funding", "", f"A round in the last {age} days +2, in the last year +1."],
         ["Trigger", "", f"The best dated trigger by type ({_join(f'{k} {v:g}' for k, v in tw.items())}) times how recent "
                         f"it is (45 days or less x1, 90 days x0.8, {age} days x0.6), plus 0.5 per extra trigger, at most "
-                        "+1. No dated trigger with a source, no seat in the 10."],
+                        f"+1. No dated trigger with a source, no seat in the {c.LEADS}."],
         ["Tech", "", (_join(f"{k} +{w:g}" for k, w in techw.items()) + f", at most +{cfg('tech_cap')}.") if techw else "none set"],
         ["Community", "", f"+1 per channel ({_join(cfg('community_channels'))}), at most +2."],
         [f"Already uses a tool like {company}", "", f"Yes {cfg('has_ai_assistant'):+g}, checked and no {cfg('no_ai_assistant'):+g}."],
@@ -311,7 +311,7 @@ def _how(meta, icp, longlist, sl, enrichment, top, table, short, caps, company):
     out += [[], [Cell("How the score works", "bold")],
             [Cell("Part", "header"), Cell("", "header"), Cell("The rule, with this ICP's weights", "header")]] + rules
     out += [[], [Cell("The segments", "bold")],
-            [Cell("Segment", "header"), Cell("Most in the 10", "header"), Cell("Keywords and closest customer", "header")]]
+            [Cell("Segment", "header"), Cell(f"Most in the {c.LEADS}", "header"), Cell("Keywords and closest customer", "header")]]
     out += [[s.get("label") or s["key"], caps.get(s["key"]),
              f"{_join(s.get('keywords'))}. Closest customer: {s.get('lookalike') or 'none'}."]
             for s in icp.get("segments") or []]

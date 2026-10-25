@@ -172,6 +172,17 @@ class ScoreTests(unittest.TestCase):
         beta = next(r for r in ranked if r["domain"] == "beta.io")
         self.assertTrue(any("already runs an AI assistant" in x for x in beta["reasons"]))
 
+    def test_full_segment_does_not_leave_seats_empty(self):
+        icp = copy.deepcopy(ICP)
+        icp["segments"][0]["max_in_top10"] = 1
+        ranked = score.rank_final(self.ll, ENRICHMENT, icp)
+        top = score.pick_top(ranked, icp, n=3)
+        # beta.io is over the devplat cap, but it has a dated trigger: it beats an untriggered account
+        self.assertEqual({t["domain"] for t in top}, {"alpha.dev", "beta.io", "deltapay.com"})
+        self.assertFalse(any(t["needs_trigger"] for t in top))
+        self.assertEqual([t["rank"] for t in top], [1, 2, 3])
+        self.assertEqual([t["score"] for t in top], sorted((t["score"] for t in top), reverse=True))
+
     def test_triage_drops_and_sets_segment(self):
         tri = {"accounts": {"agency.co": {"drop": "services firm"},
                             "beta.io": {"segment": "fintech", "description": "Payments API"}}}
@@ -201,7 +212,7 @@ class ScoreTests(unittest.TestCase):
         ranked = score.rank_final(self.ll, ENRICHMENT, ICP)
         top = score.pick_top(ranked, ICP, n=2)
         probs = score.check_top10(top, "Acme")
-        self.assertTrue(any("needs 10" in p for p in probs))
+        self.assertTrue(any("needs 5" in p for p in probs))
         self.assertTrue(any("why is empty" in p for p in probs))
         top[0]["why"] = "New York API company with big docs, just like Mapbox (Acme's customer)."
         top[0]["trigger_text"] = "Raised a Series B on 1 Oct 2026."
@@ -299,7 +310,7 @@ class ChampionTests(unittest.TestCase):
         self.assertEqual(credits, 3)
         self.assertEqual(out["accounts"]["alpha.dev"]["linkedin_url"], "https://www.linkedin.com/in/ana")
         self.assertIn("email on betasource.com", out["accounts"]["beta.io"]["note"])
-        self.assertTrue(any("not one of the 10" in p for p in probs))
+        self.assertTrue(any("not one of the picks" in p for p in probs))
 
 
 class ReportTests(unittest.TestCase):
@@ -391,7 +402,7 @@ class CliTests(unittest.TestCase):
             searched = common.load(os.path.join(run, common.LONGLIST))["searched"]
             self.assertEqual(len(everyone), 1 + searched)    # every company the search found, dropped ones included
             outcomes = {r[1]: r[4] for r in everyone[1:]}
-            self.assertEqual(outcomes["Alpha"], "Top 10, #1")
+            self.assertEqual(outcomes["Alpha"], "Picked, #1")
             self.assertEqual(outcomes["Mapbox"], "Out at the long list: already a customer")
             self.assertTrue(outcomes["Gamma"].endswith("(still needs a dated trigger)"))   # its only round is old
             self.assertIn("How the score works", [r[0] for r in how if r])

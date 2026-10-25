@@ -11,6 +11,7 @@ import shutil
 import time
 from concurrent.futures import ThreadPoolExecutor
 
+from . import apollo as apollo_mod
 from . import champions as ch
 from . import clay as clay_mod
 from . import rest
@@ -23,12 +24,13 @@ from . import score as sc
 from . import sequence as sq
 
 ICP_MAX_AGE_DAYS = 30
-SHORTLIST = 30           # web research loses a few accounts to missing triggers and hidden customers
 ENRICH_BATCH = 5
 ENRICH_WORKERS = 6
 ENRICH_SEARCHES = 25     # per batch of 5
-TRIGGER_RETRIES = 10     # targeted trigger searches for NEEDS TRIGGER accounts, per run
+TRIGGER_RETRIES = 5      # targeted trigger searches for NEEDS TRIGGER accounts, per run, run in parallel
 FINAL_ROUNDS = 8
+CHAMPION_ROUNDS = 5      # rounds of "no champion here: the next account takes the seat"
+SHORT_NOTES = ("no dated trigger found for ", "only ")   # notes _pick_ten rewrites each time it runs
 MIN_LONGLIST = 40
 TRIGGER_TYPES = {"funding", "launch", "new_leader", "hiring", "acquisition", "partnership", "expansion", "other"}
 
@@ -45,7 +47,7 @@ RETRY_PART = "retry.json"
 
 STAGES = [("already_pitched", "Accounts already pitched"), ("research_and_icp", "Research and ICP"),
           ("long_list", "Long list from Apollo"), ("triage_and_shortlist", "Triage and shortlist"),
-          ("enrich", "Enrich the shortlist"), ("final_ten", "Pick the 10"), ("find_champions", "Find the champions"),
+          ("enrich", "Enrich the shortlist"), ("final_ten", "Pick the accounts"), ("find_champions", "Find the champions"),
           ("write_sequence", "Write the emails"), ("load_lemlist", "Load the lemlist draft"), ("finish", "Report")]
 
 
@@ -243,7 +245,7 @@ class Pipeline:
         tri = self.load(c.TRIAGE)
         applied = sc.apply_triage(longlist, tri)
         ranked = sc.rank_pre(applied, icp)
-        n = (icp.get("scoring") or {}).get("shortlist") or SHORTLIST
+        n = c.SHORTLIST_SIZE   # the run's size wins over an older icp.json "shortlist"
         self.save(c.SHORTLIST, {"ranked": ranked, "shortlist": [r["domain"] for r in ranked[:n]],
                                 "triage_dropped": applied["triage_dropped"]})
         self.log(f"  {len(applied['triage_dropped'])} dropped on the read, shortlisted {min(n, len(ranked))} of {len(ranked)}")
@@ -333,7 +335,7 @@ class Pipeline:
         self.save(c.RANKED, ranked)
         top = sc.pick_top(ranked, icp)
         old = {t["domain"]: t for t in self.load(c.TOP10, [])}
-        for t in top:   # keep what was already written for an account that stays in the top 10
+        for t in top:   # keep what was already written for an account that stays in the picks
             for k in ("why", "trigger_text", "lookalike"):
                 t[k] = (old.get(t["domain"]) or {}).get(k) or t[k]
         self.save(c.TOP10, top)
@@ -353,16 +355,25 @@ class Pipeline:
         self.note(f"{domain} left out: {reason}")
 
     def final_ten(self):
-        self.stage("Stage 6: final score and the 10")
+        self.stage(f"Stage 6: final score and the {c.LEADS}")
+        self._pick_ten()
+
+    def _pick_ten(self):
+        """Score, research missing triggers, write why / trigger_text, until top10.json is ready. Run again after an
+        account is left out, so the next one takes its seat."""
+        self.meta["notes"] = [n for n in self.meta["notes"] if not n.startswith(SHORT_NOTES)]
         tried = set(self.meta.setdefault("trigger_retries", []))
         for _ in range(FINAL_ROUNDS):
             icp, top = self._score_final()
             need = [t for t in top if t["needs_trigger"] and t["domain"] not in tried]
             if need and len(tried) < TRIGGER_RETRIES:
-                for t in need[:TRIGGER_RETRIES - len(tried)]:
-                    tried.add(t["domain"])
-                    self.meta["trigger_retries"] = sorted(tried)
-                    self._retry_trigger(icp, t)
+                need = need[:TRIGGER_RETRIES - len(tried)]
+                tried.update(t["domain"] for t in need)
+                self.meta["trigger_retries"] = sorted(tried)
+                with ThreadPoolExecutor(max_workers=getattr(self.claude, "workers", ENRICH_WORKERS)) as pool:
+                    found = list(pool.map(lambda t: self._search_trigger(icp, t), need))
+                for t, ans in zip(need, found):   # files are written one at a time
+                    self._apply_trigger(icp, t, ans)
                 self.merge_enrichment()
                 continue
             pending = [t for t in top if not t["needs_trigger"] and not (t["why"] and t["trigger_text"])]
@@ -373,22 +384,24 @@ class Pipeline:
         icp, top = self._score_final()
         dropped = [t for t in top if t["needs_trigger"]]
         if dropped:
-            self.note(f"no dated trigger found for {', '.join(t['name'] for t in dropped)}: out of the 10")
+            self.note(f"no dated trigger found for {', '.join(t['name'] for t in dropped)}: out of the {c.LEADS}")
             top = [dict(t, rank=i) for i, t in enumerate((t for t in top if not t["needs_trigger"]), 1)]
             self.save(c.TOP10, top)
         probs = sc.check_top10(top, icp["company"]["name"], [cu["name"] for cu in icp.get("customers") or []])
         short = [p for p in probs if p.startswith("top10 has")]
         if short:
-            self.note(f"only {len(top)} accounts had a dated trigger and passed every check, not 10")
+            self.note(f"only {len(top)} accounts had a dated trigger and passed every check, not {c.LEADS}")
         rest = [p for p in probs if p not in short]
         if rest:
             raise SystemExit("top10.json:\n- " + "\n- ".join(rest))
         for t in top:
             self.log(f"  {t['rank']:>2}. {t['score']:>5} {t['name']} ({t['domain']}): {t['trigger_text']}")
 
-    def _retry_trigger(self, icp, t):
-        ans = self.claude.ask_json(f"trigger {t['domain']}", prompts.trigger(icp, t, self.today), keys=("triggers",),
-                                   searches=5, effort="medium")
+    def _search_trigger(self, icp, t):
+        return self.claude.ask_json(f"trigger {t['domain']}", prompts.trigger(icp, t, self.today), keys=("triggers",),
+                                    searches=5, effort="medium")
+
+    def _apply_trigger(self, icp, t, ans):
         found = sc.valid_triggers({"triggers": ans["triggers"]}, icp)
         if not found:
             self._drop(t["domain"], "no dated trigger in the last 183 days")
@@ -426,7 +439,7 @@ class Pipeline:
                     out += [p for p in sc.check_top10([trial], icp["company"]["name"], names) if not p.startswith("top10 has")]
             return out
 
-        ans = self.claude.ask_json("the 10", prompts.write_top10(icp, facts), keys=("accounts",), check=check, effort="high")
+        ans = self.claude.ask_json("the picks", prompts.write_top10(icp, facts), keys=("accounts",), check=check, effort="high")
         top = self.load(c.TOP10)
         left_out = False
         for t in top:
@@ -442,8 +455,33 @@ class Pipeline:
         return left_out
 
     def find_champions(self):
-        self.stage("Stage 7: champions (free search, then at most 10 Apollo credits)")
-        icp, top = self.load(c.ICP), self.load(c.TOP10)
+        """A seat with no champion (nobody fits at Apollo, or the reveal has no email) goes to the next account, so
+        lemlist gets every lead, not the leads minus the misses. Reveals stay within one per lead."""
+        self.stage(f"Stage 7: champions (free search, then at most {c.LEADS} Apollo credits)")
+        for _ in range(CHAMPION_ROUNDS):
+            top = self.load(c.TOP10)
+            empty = [(t, "no champion at Apollo who fits the buyer") for t in self._pick_champions(top)]
+            if not empty:
+                self._reveal(top)
+                champs = self.load(c.CHAMPIONS, {"accounts": {}})["accounts"]
+                empty = [(t, "the champion Apollo revealed has no email") for t in top
+                         if not (champs.get(t["domain"]) or {}).get("email")]
+                if not empty or apollo_mod.BUDGET - apollo_mod.spent(self.meta["credits"]) <= 0:
+                    break
+            for t, why in empty:
+                self._drop(t["domain"], why)
+            self.log(f"  {len(empty)} seat(s) with no champion: the next account takes each")
+            self._pick_ten()
+        top = self.load(c.TOP10)
+        champs = self.load(c.CHAMPIONS, {"accounts": {}})["accounts"]
+        for t in top:
+            x = champs.get(t["domain"])
+            self.log(f"  {t['name']}: " + (f"{x['first_name']} {x['last_name']} ({x['title']}) [{x['email_status']}]"
+                                           if x else "no champion"))
+
+    def _pick_champions(self, top):
+        """Free people search and Claude's pick for every account that has none yet. -> the accounts with nobody."""
+        icp = self.load(c.ICP)
         champ = icp.get("champion") or {}
         people = self.load(PEOPLE, {})
         for t in top:
@@ -462,9 +500,11 @@ class Pipeline:
             people[t["domain"]] = found
             self.save(PEOPLE, people)
             self.log(f"  {t['name']}: {len(found['people'])} candidates ({found['tier']})")
-        if not self.has(PICKS):
-            cands = [{"domain": t["domain"], "name": t["name"], "employees": t["employees"],
-                      "candidates": people[t["domain"]]["people"]} for t in top if people[t["domain"]]["people"]]
+        picks = self.load(PICKS, {"picks": {}})
+        todo = [t for t in top if t["domain"] not in picks["picks"]]
+        cands = [{"domain": t["domain"], "name": t["name"], "employees": t["employees"],
+                  "candidates": people[t["domain"]]["people"]} for t in todo if people[t["domain"]]["people"]]
+        if cands:
             ids = {d: {p["id"] for p in people[d]["people"]} for d in people}
 
             def check(obj):
@@ -474,13 +514,33 @@ class Pipeline:
                         out.append(f"{d}: the pick must be {{\"id\": ...}} with one of that account's candidate ids, or null")
                 return out
 
-            picks = self.claude.ask_json("champions", prompts.champions(icp, cands), keys=("picks",), check=check,
-                                         effort="medium") if cands else {"picks": {}}
-            self.save(PICKS, picks)
+            ans = self.claude.ask_json("champions", prompts.champions(icp, cands), keys=("picks",), check=check,
+                                       effort="medium")
+            picks["picks"].update({t["domain"]: ans["picks"].get(t["domain"]) for t in todo})
+        for t in todo:
+            picks["picks"].setdefault(t["domain"], None)
+        self.save(PICKS, picks)
+        return [t for t in top if not picks["picks"].get(t["domain"])]
+
+    def _reveal(self, top):
+        """Apollo's bulk match for the picks not revealed yet (1 credit each), then champions.json."""
+        people = self.load(PEOPLE, {})
         picks = {d: p for d, p in self.load(PICKS)["picks"].items() if p}
-        if not self.has(APOLLO_MATCH_RAW):
-            ids = [picks[t["domain"]]["id"] for t in top if t["domain"] in picks]
-            raw = self.apollo.bulk_match(ids, self.meta["credits"]) if ids else {"matches": [], "credits_consumed": 0}
+        raw = self.load(APOLLO_MATCH_RAW, {"matches": [], "credits_consumed": 0})
+        done = {m.get("id") for m in raw.get("matches") or [] if m} | set(raw.get("asked") or [])
+        ids = [picks[t["domain"]]["id"] for t in top if t["domain"] in picks and picks[t["domain"]]["id"] not in done]
+        left = apollo_mod.BUDGET - apollo_mod.spent(self.meta["credits"])
+        if len(ids) > left:
+            self.note(f"{len(ids) - max(left, 0)} champion(s) not revealed: the run's {apollo_mod.BUDGET} Apollo credits "
+                      "are spent, revealing more needs Kevin's yes")
+            ids = ids[:max(left, 0)]
+        if ids:
+            new = self.apollo.bulk_match(ids, self.meta["credits"])
+            paid = new.get("credits_consumed")
+            raw = {"matches": (raw.get("matches") or []) + (new.get("matches") or []),
+                   "asked": sorted(done | set(ids)),
+                   "credits_consumed": (raw.get("credits_consumed") or 0)
+                   + (paid if paid is not None else sum(1 for m in new.get("matches") or [] if m))}
             self.save(APOLLO_MATCH_RAW, raw)
         out, credits, probs = ch.build(c.read_text(self.p(APOLLO_MATCH_RAW)), top, self.load(c.CHAMPIONS))
         for d, x in out["accounts"].items():
@@ -490,10 +550,6 @@ class Pipeline:
         if credits is None:
             credits = sum(1 for m in c.load(self.p(APOLLO_MATCH_RAW)).get("matches") or [] if m)
         self.meta["credits"]["apollo_reveal"] = credits
-        for t in top:
-            x = out["accounts"].get(t["domain"])
-            self.log(f"  {t['name']}: " + (f"{x['first_name']} {x['last_name']} ({x['title']}) [{x['email_status']}]"
-                                           if x else "no champion"))
         for p in probs:
             self.note(p)
 
@@ -502,12 +558,13 @@ class Pipeline:
         icp, top = self.load(c.ICP), self.load(c.TOP10)
         champs = {"accounts": {d: x for d, x in self.load(c.CHAMPIONS, {"accounts": {}})["accounts"].items()
                                if x.get("email")}}   # only champions with an email get the sequence
-        if not self.has(c.SEQUENCE):
+        old = self.load(c.SEQUENCE)
+        if not old or any(d not in (old.get("leads") or {}) for d in champs["accounts"] if d in {t["domain"] for t in top}):
             enr = self.load(c.ENRICHMENT, {}).get("accounts") or {}
             accounts = []
             for t in top:
                 x = champs["accounts"].get(t["domain"])
-                if not x:
+                if not x or (old and t["domain"] in (old.get("leads") or {})):
                     continue
                 e = enr.get(t["domain"]) or {}
                 accounts.append({"domain": t["domain"], "name": t["name"], "segment": t["industry"],
@@ -521,14 +578,19 @@ class Pipeline:
             want = {a["domain"] for a in accounts}
             first = [True]
 
+            def merged(seq):
+                """A run that already loaded leads keeps its templates (they are lemlist's steps) and adds leads."""
+                return dict(old, leads={**old.get("leads", {}), **(seq.get("leads") or {})}) if old else seq
+
             def check(seq):
+                seq = merged(seq)
                 if len(seq.get("touches") or []) != 3:
                     return ["sequence.json needs exactly 3 touches"]
                 missing = sorted(want - set(seq.get("leads") or {}))
                 if missing:
                     return [f"leads has no entry for {', '.join(missing)}"]
                 try:
-                    rendered = sq.render(seq, top, champs)
+                    rendered = sq.render(seq, [t for t in top if t["domain"] in want], champs)
                 except SystemExit as e:
                     return [str(e)]
                 errors, warnings = sq.lint_all(rendered, seq.get("signature", "Kevin"))
@@ -537,8 +599,9 @@ class Pipeline:
                 first[0] = False
                 return errors
 
-            seq = self.claude.ask_json("sequence", prompts.sequence(icp, accounts), keys=("touches", "leads"),
-                                       check=check, effort="high", tries=4)
+            seq = merged(self.claude.ask_json("sequence", prompts.sequence(icp, accounts, old and old["touches"]),
+                                              keys=("leads",) if old else ("touches", "leads"),
+                                              check=check, effort="high", tries=4))
             sq.set_days(seq)
             seq.setdefault("company", icp["company"]["name"])
             seq.setdefault("signature", "Kevin")
@@ -553,9 +616,7 @@ class Pipeline:
 
     def load_lemlist(self):
         self.stage("Stage 9: lemlist (draft, never launched)")
-        if self.has(c.LEMLIST_RESULT):
-            self.log("  lemlist_result.json is there")
-            return
+        prev = self.load(c.LEMLIST_RESULT)
         seq, top = sq.set_days(self.load(c.SEQUENCE)), self.load(c.TOP10)
         steps = sq.lemlist_steps(seq)
         leads, skipped = sq.lemlist_leads(seq, top, self.load(c.CHAMPIONS, {"accounts": {}}), self.meta["date"])
@@ -563,12 +624,18 @@ class Pipeline:
         self.save(c.LEMLIST_LEADS, leads)
         for s in skipped:
             self.note(f"{s['account']}: {s['reason']}, not added to lemlist")
+        if prev:   # a run topped up after it loaded: only the leads lemlist does not have yet
+            have = {(r.get("email") or "").lower() for r in prev.get("results") or []}
+            leads = [lead for lead in leads if lead["email"].lower() not in have]
+            if not leads:
+                self.log("  lemlist_result.json is there, every lead is in")
+                return
         if not self.lemlist:
             self.log("  no LEMLIST_API_KEY: lemlist_steps.json and lemlist_leads.json are ready to load by hand")
             return
         name = campaign_name(self.company)
         lem = self.lemlist
-        camp = lem.find_campaign(name)
+        camp = {"_id": prev["campaign_id"]} if prev else lem.find_campaign(name)
         if camp:
             cid = camp["_id"]
             self.log(f"  campaign '{name}' exists: its steps stay, adding the leads")
@@ -598,7 +665,7 @@ class Pipeline:
         status = lem.campaign_status(cid)
         self.save(c.LEMLIST_RESULT, {"campaign_id": cid, "campaign_name": name, "status": status,
                                      "sender": me and me["email"], "delays": [s["delay"] for s in steps],
-                                     "results": results})
+                                     "results": ((prev or {}).get("results") or []) + results})
         if status != "draft":
             raise SystemExit(f"lemlist campaign '{name}' reads {status!r} after adding the leads: pause it in lemlist now")
         self.log(f"  {sum(r['outcome'] == 'added' for r in results)} of {len(results)} leads added, campaign is a draft")
@@ -656,7 +723,7 @@ class Pipeline:
                    f"{sum(r['outcome'] == 'added' for r in lem['results'])} new leads, sent from {lem.get('sender') or 'nobody yet'}, "
                    "never launched." if lem else
                    "lemlist: not loaded (no LEMLIST_API_KEY)."),
-                  f"Files: {self.p(c.ACCOUNTS_XLSX)} (the 100, the 30 and the 10, and how they were picked), "
+                  f"Files: {self.p(c.ACCOUNTS_XLSX)} (the 100, the {len(sl.get('shortlist') or [])} researched and the {len(table)} picked, and how), "
                   f"{self.p(c.LEADS_CSV)}, {self.p(c.EMAILS_DOCX)} and {self.p(c.REPORT_DOCX)} (Word), "
                   f"{self.p(c.EMAILS)}, {self.p(c.REPORT)}"]
         if self.meta["notes"]:

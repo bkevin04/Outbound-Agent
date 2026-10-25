@@ -4,7 +4,7 @@ macOS: a LaunchAgent (~/Library/LaunchAgents/dev.outbound-agent.<slug>.plist) lo
 asleep at that time runs it when it wakes up; one that is off or logged out skips that week. Linux: a crontab line.
 The job runs `python -m agent scheduled <company>`, which starts the run the way the dashboard does (its log in
 run.log in the run folder), so the dashboard shows it like any other. What is scheduled is kept in
-runs/<slug>/schedule.json (git-ignored with the rest of runs/). Each run spends what a run spends: at most 11 Apollo
+runs/<slug>/schedule.json (git-ignored with the rest of runs/). Each run spends what a run spends: at most 6 Apollo
 credits, and the lemlist campaign stays a draft."""
 import os
 import platform

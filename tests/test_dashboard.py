@@ -18,7 +18,7 @@ os.environ["OUTBOUND_TODAY"] = "2026-10-18"
 
 from unittest import mock  # noqa: E402
 
-from agent import common, dashboard, pipeline, schedule  # noqa: E402
+from agent import common, dashboard, pipeline, projects, schedule  # noqa: E402
 from test_pipeline import FakeApollo, FakeClaude, FakeLemlist  # noqa: E402
 
 
@@ -107,6 +107,20 @@ class DashboardTests(unittest.TestCase):
         code, body = self.post("/api/schedule", {"company": "Acme", "off": True})
         self.assertEqual(body["schedules"], {})
 
+    def test_project_endpoints(self):
+        code, body = self.post("/api/projects", {"action": "create", "name": "Fintech", "run": "acme/2026-10-18"})
+        self.assertEqual(code, 200)
+        pid = body["projects"][0]["id"]
+        self.assertEqual(body["runs"][0]["project"], pid)
+        self.assertEqual(self.post("/api/projects", {"action": "create", "name": "fintech"})[0], 400)   # taken
+        self.assertEqual(self.post("/api/projects", {"action": "move", "run": "../x/2026-10-18", "id": pid})[0], 400)
+        code, body = self.post("/api/projects", {"action": "move", "run": "acme/2026-10-18", "id": ""})
+        self.assertIsNone(body["runs"][0]["project"])
+        code, body = self.post("/api/projects", {"action": "delete", "id": pid})
+        self.assertEqual(body["projects"], [])
+        code, state = self.get("/api/state", {"X-Token": "tok"})
+        self.assertEqual(json.loads(state)["projects"], [])
+
     def test_bad_run_ids(self):
         for rid in ("../etc/2026-10-18", "acme", "acme/2026-10-18/x", "acme/../../x"):
             with self.assertRaises(ValueError):
@@ -158,6 +172,34 @@ class DashboardTests(unittest.TestCase):
                     os.environ.pop("APOLLO_API_KEY", None)
                 else:
                     os.environ["APOLLO_API_KEY"] = old
+
+
+class ProjectTests(unittest.TestCase):
+    def test_projects(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            pr = projects.Projects(tmp)
+            a = pr.create("  Fintech   apps ")
+            self.assertEqual(a["name"], "Fintech apps")
+            b = pr.create("Dev tools")
+            with self.assertRaises(ValueError):
+                pr.create("")
+            with self.assertRaises(ValueError):
+                pr.rename(b["id"], "FINTECH APPS")
+            pr.rename(b["id"], "Developer tools")
+            pr.move("acme/2026-10-12", a["id"])
+            pr.move("zeta/2026-10-12", b["id"])
+            with self.assertRaises(ValueError):
+                pr.move("acme/2026-10-12", "nope")
+            where = pr.of(["acme/2026-10-12", "acme/2026-10-19", "zeta/2026-10-12", "new/2026-10-19"])
+            self.assertEqual(where, {"acme/2026-10-12": a["id"], "acme/2026-10-19": a["id"],   # next week follows
+                                     "zeta/2026-10-12": b["id"], "new/2026-10-19": None})
+            pr.move("acme/2026-10-19", "")            # taken out on purpose: it stays out
+            self.assertIsNone(pr.of(["acme/2026-10-19"])["acme/2026-10-19"])
+            pr.delete(a["id"])
+            self.assertEqual([p["name"] for p in pr.all()], ["Developer tools"])
+            self.assertIsNone(pr.of(["acme/2026-10-12"])["acme/2026-10-12"])   # its runs stay, in none
+            pr.forget("zeta/2026-10-12")
+            self.assertIsNone(pr.of(["zeta/2026-10-12"])["zeta/2026-10-12"])
 
 
 class ScheduleTests(unittest.TestCase):

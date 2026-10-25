@@ -8,6 +8,11 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RUNS = os.path.join(ROOT, "runs")
 COMPANIES = os.path.join(ROOT, "companies")
 
+# How big a run is: the leads that go to lemlist, and the accounts researched to find them (Kevin, 20 Oct 2026:
+# 5 leads a run, fewer Apollo credits and less Claude than 10).
+LEADS = 5
+SHORTLIST_SIZE = 15
+
 # Run-folder file names, in the order the stages write them.
 RUN = "run.json"
 ICP = "icp.json"

@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="token" content="__TOKEN__">
-<title>Outbound Agent</title>
+<title>Kevin Outbound Agent</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;500;600;700&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap" rel="stylesheet">
@@ -39,6 +39,7 @@
   }
 }
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 html { -webkit-text-size-adjust: 100%; }
 body {
   margin: 0;
@@ -100,11 +101,29 @@ a.btn { text-decoration: none; display: inline-block; }
 }
 .runlist .pick:hover { background: var(--wash); }
 .runlist .pick[aria-current="true"] { background: var(--sheet); box-shadow: inset 3px 0 0 var(--blue); }
-.runlist .more {
+.runlist .more, .ghead .more {
   position: absolute; top: 50%; right: 4px; transform: translateY(-50%); width: 30px; height: 30px; border: 0;
   border-radius: 3px; background: none; color: var(--muted); cursor: pointer; font-size: 1.15rem; line-height: 1;
 }
-.runlist .more:hover, .runlist .more[aria-expanded="true"] { background: var(--wash); color: var(--ink); }
+.runlist .more:hover, .runlist .more[aria-expanded="true"], .ghead .more:hover, .ghead .more[aria-expanded="true"] { background: var(--wash); color: var(--ink); }
+.sechead { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 10px; }
+.sechead h2 { margin-bottom: 0; }
+.link { background: none; border: 0; padding: 2px 4px; color: var(--blue); cursor: pointer; font-size: .8125rem; font-weight: 600; }
+.link:hover { text-decoration: underline; }
+.groups { display: grid; gap: 8px; }
+.ghead { position: relative; }
+.gtoggle {
+  width: 100%; display: flex; align-items: center; gap: 8px; background: none; border: 0; border-radius: 3px;
+  padding: 6px 40px 6px 4px; cursor: pointer; text-align: left; font-weight: 650; font-size: .875rem;
+}
+.gtoggle:hover { background: var(--wash); }
+.chev { width: 0; height: 0; border-left: 5px solid currentColor; border-top: 4px solid transparent; border-bottom: 4px solid transparent; transition: transform .15s; }
+.gtoggle[aria-expanded="true"] .chev { transform: rotate(90deg); }
+.gname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.count { color: var(--muted); font-weight: 400; font-size: .8125rem; }
+.group .runlist { margin-left: 6px; padding-left: 6px; border-left: 1px solid var(--line); }
+.gempty { margin: 2px 0 4px 18px; font-size: .8rem; }
+@media (prefers-reduced-motion: reduce) { .chev { transition: none; } }
 .runlist .sched { grid-column: 1; color: var(--blue); font-size: .78rem; }
 .menu {
   position: fixed; z-index: 20; min-width: 14rem; padding: 4px; display: grid; background: var(--sheet);
@@ -218,7 +237,7 @@ section.block { margin-top: 36px; }
 section.block > h3 { font-size: 1.15rem; font-weight: 650; margin-bottom: 14px; }
 section.block > .lede { margin: -8px 0 14px; color: var(--muted); }
 
-/* Funnel: bars that narrow to the 10 */
+/* Funnel: bars that narrow to the picks */
 .funnel { display: grid; gap: 8px; margin: 0; }
 .funnel div { display: grid; grid-template-columns: minmax(10rem, 19rem) minmax(0, 1fr) 3rem; gap: 14px; align-items: center; }
 .funnel dt { font-size: .9rem; }
@@ -314,19 +333,20 @@ dialog .row { display: flex; gap: 8px; justify-content: flex-end; margin-top: 6p
 <body>
 <div class="app">
   <aside class="side">
-    <div class="brand"><span class="mark" aria-hidden="true"></span><h1>Outbound Agent</h1></div>
+    <div class="brand"><span class="mark" aria-hidden="true"></span><h1>Kevin Outbound Agent</h1></div>
 
     <form class="new" id="newRun">
       <h2>New run</h2>
       <label>Company <input name="company" required placeholder="Acme" autocomplete="off"></label>
       <label><span>Domain <span class="opt">(optional)</span></span><input name="domain" placeholder="acme.dev" autocomplete="off"></label>
+      <label id="projField" hidden>Project <select name="project" id="newProjectSel"></select></label>
       <button class="btn" type="submit">Start run</button>
       <p class="msg" id="newMsg" role="status"></p>
     </form>
 
     <section aria-labelledby="runsTitle">
-      <h2 id="runsTitle">Runs</h2>
-      <ul class="runlist" id="runs"></ul>
+      <div class="sechead"><h2 id="runsTitle">Runs</h2><button type="button" class="link" id="newProject">+ New project</button></div>
+      <div class="groups" id="runs"></div>
     </section>
 
     <section aria-labelledby="keysTitle">
@@ -351,7 +371,7 @@ dialog .row { display: flex; gap: 8px; justify-content: flex-end; margin-top: 6p
     <label><span>lemlist <span class="opt">(optional: without it the campaign is not built)</span></span><input name="lemlist" type="password" autocomplete="off"></label>
     <label><span>Send from <span class="opt">(optional: the lemlist mailbox the emails come from; by default the one that owns the key)</span></span><input name="lemlist_sender" type="email" autocomplete="off" placeholder="you@yourdomain.com"></label>
     <label><span>Clay <span class="opt">(optional: shows your credit balance)</span></span><input name="clay" type="password" autocomplete="off"></label>
-    <label><span>Clay function ID <span class="opt">(optional: in Clay, Functions, open one, Details, and turn on API; for example "Get Funding and Expansion Events". It runs once on the 30 shortlisted accounts and uses Clay credits)</span></span><input name="clay_routine" autocomplete="off" placeholder="function:t_..."></label>
+    <label><span>Clay function ID <span class="opt">(optional: in Clay, Functions, open one, Details, and turn on API; for example "Get Funding and Expansion Events". It runs once on the __SHORTLIST__ shortlisted accounts and uses Clay credits)</span></span><input name="clay_routine" autocomplete="off" placeholder="function:t_..."></label>
     <label class="check"><input type="checkbox" name="clear_clay_routine" value="1"> Remove the saved function ID (the research is then web only)</label>
     <p class="msg" id="keysMsg" role="status"></p>
     <div class="row">
@@ -364,7 +384,7 @@ dialog .row { display: flex; gap: 8px; justify-content: flex-end; margin-top: 6p
 <dialog id="schedDialog" aria-labelledby="schedTitle">
   <form id="schedForm">
     <h2 id="schedTitle">Run every week</h2>
-    <p>On the day and time you pick, this computer starts a new run for the company: 10 new accounts (the ones already pitched are skipped), at most 11 Apollo credits, and the lemlist campaign stays a draft. The computer has to be on: a Mac that is asleep then runs it when it wakes up.</p>
+    <p>On the day and time you pick, this computer starts a new run for the company: __LEADS__ new accounts (the ones already pitched are skipped), at most __CREDITS__ Apollo credits, and the lemlist campaign stays a draft. The computer has to be on: a Mac that is asleep then runs it when it wakes up.</p>
     <div class="two">
       <label>Day <select name="day"><option>Monday</option><option>Tuesday</option><option>Wednesday</option><option>Thursday</option><option>Friday</option><option>Saturday</option><option>Sunday</option></select></label>
       <label>Time <input name="time" type="time" value="09:00" required></label>
@@ -373,6 +393,19 @@ dialog .row { display: flex; gap: 8px; justify-content: flex-end; margin-top: 6p
     <div class="row">
       <button class="btn quiet" type="button" id="schedCancel">Cancel</button>
       <button class="btn" type="submit">Save schedule</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="projDialog" aria-labelledby="projTitle">
+  <form id="projForm">
+    <h2 id="projTitle">New project</h2>
+    <p>A folder for runs on this dashboard. Next week's run of the same company, scheduled or not, lands in it too.</p>
+    <label>Name <input name="pname" maxlength="60" required autocomplete="off" placeholder="Fintech, Q4 applications, ..."></label>
+    <p class="msg" id="projMsg" role="status"></p>
+    <div class="row">
+      <button class="btn quiet" type="button" id="projCancel">Cancel</button>
+      <button class="btn" type="submit" id="projSave">Create project</button>
     </div>
   </form>
 </dialog>
@@ -402,7 +435,9 @@ async function api(path, body) {
 
 let keyState = {}, sdkVersion = null, checks = null, claudeVia = 'code';
 let selected = null, requested = null, detail = null, logOffset = 0, runs = [];
-let schedules = {}, canSchedule = false, menuFor = null, schedTarget = null;
+let schedules = {}, canSchedule = false, menuFor = null, schedTarget = null, projects = [], projMode = null;
+let collapsed = new Set();
+try { collapsed = new Set(JSON.parse(localStorage.getItem('outbound.collapsed') || '[]')); } catch (e) {}
 const slugOf = id => (id || '').split('/')[0];
 const sections = {}, planeAt = {};
 const expanded = new Set();
@@ -424,7 +459,7 @@ function renderKeys() {
     + row('lemlist', 'lemlist', 'lemlist', true)
     + (keys.lemlist ? note(keys.lemlist_sender ? 'Emails go out from the address you set.' : 'Emails go out from the mailbox that owns the key.') : '')
     + row('clay', 'clay', 'Clay', true)
-    + (keys.clay ? note(keys.clay_routine ? 'Your Clay function runs on the 30 accounts in the research step.'
+    + (keys.clay ? note(keys.clay_routine ? 'Your Clay function runs on the __SHORTLIST__ accounts in the research step.'
       : 'Shows your Clay balance. Add a function ID to use Clay in the research step.') : '')
     + (viaCode || (sdk && +sdk.split('.')[0] >= 1) ? '' : `<li class="keynote bad">The anthropic package is missing. Run: .venv/bin/pip install -r requirements.txt</li>`);
 }
@@ -440,8 +475,7 @@ async function checkKeys() {
   if (detail) renderRun(detail);
 }
 
-function renderRuns() {
-  $('#runs').innerHTML = runs.length ? runs.map(r => {
+function runItem(r) {
     const s = schedules[slugOf(r.id)];
     return `<li>
       <button type="button" class="pick" data-id="${esc(r.id)}" aria-current="${r.id === selected}">
@@ -452,20 +486,64 @@ function renderRuns() {
       </button>
       <button type="button" class="more" data-menu="${esc(r.id)}" aria-haspopup="menu" aria-expanded="${menuFor === r.id}" aria-label="More for ${esc(r.company)}, ${esc(day(r.date))}">&#8943;</button>
     </li>`;
-  }).join('') : '<li class="none">No runs yet.</li>';
+}
+
+function group(g) {
+  const key = g.id || '-', open = !collapsed.has(key);
+  return `<section class="group">
+      <div class="ghead">
+        <button type="button" class="gtoggle" data-group="${esc(key)}" aria-expanded="${open}"><span class="chev" aria-hidden="true"></span><span class="gname">${esc(g.name)}</span></button>
+        ${g.id ? `<button type="button" class="more" data-pmenu="${esc(g.id)}" aria-haspopup="menu" aria-expanded="${menuFor === 'p:' + g.id}" aria-label="More for the project ${esc(g.name)}">&#8943;</button>` : ''}
+      </div>
+      ${!open ? '' : g.runs.length ? `<ul class="runlist">${g.runs.map(runItem).join('')}</ul>`
+        : '<p class="none gempty">No runs here yet. Move one in from its &#8943; menu, or pick this project when you start a run.</p>'}
+    </section>`;
+}
+
+// Projects first, in the order they were made, then the runs in none.
+function renderRuns() {
+  const known = new Set(projects.map(p => p.id));
+  const loose = runs.filter(r => !known.has(r.project));
+  if (!projects.length) {
+    $('#runs').innerHTML = runs.length ? `<ul class="runlist">${runs.map(runItem).join('')}</ul>` : '<p class="none">No runs yet.</p>';
+    return;
+  }
+  $('#runs').innerHTML = projects.map(p => group({id: p.id, name: p.name, runs: runs.filter(r => r.project === p.id)})).join('')
+    + (loose.length ? group({id: '', name: 'No project', runs: loose}) : '');
+}
+
+function fillProjectSelect() {
+  const sel = $('#newProjectSel'), keep = sel.value;
+  const html = '<option value="">No project</option>' + projects.map(p => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('');
+  if (sel.innerHTML !== html) sel.innerHTML = html;
+  sel.value = projects.some(p => p.id === keep) ? keep : '';
+  $('#projField').hidden = !projects.length;
+}
+
+function applyProjects(res) {
+  projects = res.projects; runs = res.runs;
+  renderRuns(); fillProjectSelect();
+  if (detail) renderRun(detail);
+}
+
+function openProject(mode, p, r) {
+  projMode = {mode, p, r};
+  $('#projForm').pname.value = p ? p.name : '';
+  $('#projTitle').textContent = mode === 'rename' ? 'Rename the project' : r ? `New project for ${r.company}` : 'New project';
+  $('#projSave').textContent = mode === 'rename' ? 'Save name' : 'Create project';
+  $('#projMsg').textContent = '';
+  $('#projDialog').showModal();
+}
+
+async function projectCall(body) {
+  try { applyProjects(await api('projects', body)); } catch (err) { showError(err); }
 }
 
 // The three-dot menu of a run: weekly runs for its company, and deleting it.
-function openMenu(btn) {
-  const r = runs.find(x => x.id === btn.dataset.menu);
-  if (!r) return;
-  const s = schedules[slugOf(r.id)], m = $('#runMenu');
-  menuFor = r.id;
-  m.innerHTML = (!canSchedule ? '<button type="button" role="menuitem" disabled>Weekly runs need macOS or Linux</button>'
-      : s ? `<button type="button" role="menuitem" data-do="schedule">Change the weekly run (${esc(s.day)}, ${esc(s.time)})</button>
-             <button type="button" role="menuitem" data-do="unschedule">Stop the weekly runs</button>`
-      : '<button type="button" role="menuitem" data-do="schedule">Run every week...</button>')
-    + `<hr><button type="button" role="menuitem" class="danger" data-do="delete"${r.state === 'running' ? ' disabled' : ''}>${r.state === 'running' ? 'Delete (once it has finished)' : 'Delete this run'}</button>`;
+function showMenu(btn, key, html) {
+  const m = $('#runMenu');
+  menuFor = key;
+  m.innerHTML = html;
   m.hidden = false;
   const b = btn.getBoundingClientRect();
   m.style.left = `${Math.max(8, Math.min(b.right - m.offsetWidth, innerWidth - m.offsetWidth - 8))}px`;
@@ -475,10 +553,31 @@ function openMenu(btn) {
   if (first) first.focus();
 }
 
+function openProjectMenu(btn) {
+  const p = projects.find(x => x.id === btn.dataset.pmenu);
+  if (p) showMenu(btn, 'p:' + p.id, `<button type="button" role="menuitem" data-do="rename">Rename...</button>
+    <hr><button type="button" role="menuitem" class="danger" data-do="pdelete">Delete the project (its runs stay)</button>`);
+}
+
+function openMenu(btn) {
+  const r = runs.find(x => x.id === btn.dataset.menu);
+  if (!r) return;
+  const s = schedules[slugOf(r.id)];
+  const moves = projects.filter(p => p.id !== r.project).map(p => `<button type="button" role="menuitem" data-do="move" data-pid="${esc(p.id)}">Move to ${esc(p.name)}</button>`).join('')
+    + (projects.some(p => p.id === r.project) ? '<button type="button" role="menuitem" data-do="move" data-pid="">Take out of the project</button>' : '')
+    + '<button type="button" role="menuitem" data-do="newproject">Move to a new project...</button>';
+  showMenu(btn, r.id, (!canSchedule ? '<button type="button" role="menuitem" disabled>Weekly runs need macOS or Linux</button>'
+      : s ? `<button type="button" role="menuitem" data-do="schedule">Change the weekly run (${esc(s.day)}, ${esc(s.time)})</button>
+             <button type="button" role="menuitem" data-do="unschedule">Stop the weekly runs</button>`
+      : '<button type="button" role="menuitem" data-do="schedule">Run every week...</button>')
+    + `<hr>${moves}`
+    + `<hr><button type="button" role="menuitem" class="danger" data-do="delete"${r.state === 'running' ? ' disabled' : ''}>${r.state === 'running' ? 'Delete (once it has finished)' : 'Delete this run'}</button>`);
+}
+
 function closeMenu(focusBack) {
   if (!menuFor) return;
   $('#runMenu').hidden = true;
-  const b = $(`.more[data-menu="${CSS.escape(menuFor)}"]`);
+  const b = menuFor.startsWith('p:') ? $(`.more[data-pmenu="${CSS.escape(menuFor.slice(2))}"]`) : $(`.more[data-menu="${CSS.escape(menuFor)}"]`);
   menuFor = null;
   if (b) { b.setAttribute('aria-expanded', 'false'); if (focusBack) b.focus(); }
 }
@@ -514,9 +613,9 @@ async function saveSchedule(body) {
 
 function renderEmpty() {
   $('#main').innerHTML = `<div class="empty">
-    <h2>Find a company's next 10 accounts</h2>
-    <p>Enter a company on the left. The agent writes its ICP, pulls 100 lookalike accounts from Apollo, researches the best 30, picks 10 with a dated trigger, finds the champion at each one and writes your 3 emails.</p>
-    <p>A run takes 20 to 40 minutes and uses at most 11 Apollo credits. The lemlist campaign is built as a draft and is never sent.</p>
+    <h2>Find a company's next __LEADS__ accounts</h2>
+    <p>Enter a company on the left. The agent writes its ICP, pulls 100 lookalike accounts from Apollo, researches the best __SHORTLIST__, picks __LEADS__ with a dated trigger, finds the champion at each one and writes your 3 emails.</p>
+    <p>A run takes 20 to 40 minutes and uses at most __CREDITS__ Apollo credits. The lemlist campaign is built as a draft and is never sent.</p>
   </div>`;
 }
 
@@ -544,7 +643,7 @@ function actions(d) {
 function funnel(d) {
   if (!d.funnel.length) return '';
   const max = Math.max(...d.funnel.map(f => f.n || 0), 1);
-  return `<section class="block"><h3>From 100 companies to 10 accounts</h3><dl class="funnel">${d.funnel.map(f => `
+  return `<section class="block"><h3>From 100 companies to __LEADS__ accounts</h3><dl class="funnel">${d.funnel.map(f => `
     <div${f.label === 'Picked' ? ' class="picked"' : ''}><dt>${esc(f.label)}</dt><dd><span style="width:${Math.max(1, (f.n / max) * 100)}%"></span></dd><span class="n">${f.n}</span></div>`).join('')}
   </dl></section>`;
 }
@@ -601,7 +700,7 @@ function spend(d) {
   return `<section class="block pair">
     <div><h3>To check</h3><div style="margin-top:12px">${notes}</div></div>
     <div><h3>Spend</h3><dl class="spend" style="margin-top:12px">
-      <div><dt>Apollo</dt><dd>${used} of 11 credits${bal != null ? `, ${esc(bal)} left on your account` : ''}</dd></div>
+      <div><dt>Apollo</dt><dd>${used} of __CREDITS__ credits${bal != null ? `, ${esc(bal)} left on your account` : ''}</dd></div>
       <div><dt>Claude</dt><dd>${cl.backend === 'code' ? 'Claude Code on your plan, ' : cl.cost_usd != null ? `$${(+cl.cost_usd).toFixed(2)}, ` : ''}${cl.web_search_requests || 0} web searches</dd></div>
       <div><dt>Clay</dt><dd>${d.clay ? `${d.clay.credits_used != null ? esc(d.clay.credits_used) : '?'} credits on ${esc(d.clay.accounts)} accounts${d.clay.credits_left != null ? `, ${esc(d.clay.credits_left)} left` : ''}` : (checks && checks.clay && checks.clay.ok ? esc(checks.clay.message.replace(/^the key works( for [^,]+)?, /, '')) + ', not used in this run' : 'Not used in this run')}</dd></div>
       <div><dt>lemlist</dt><dd>${d.lemlist ? `${esc(d.lemlist.campaign)}: ${d.lemlist.status === 'draft' ? 'a draft, never launched' : esc(d.lemlist.status)}. ${d.lemlist.added} leads added${d.lemlist.sender ? `, sent from ${esc(d.lemlist.sender)}` : ''}.${timing(d.lemlist.delays)}` : 'Not loaded'}</dd></div>
@@ -614,16 +713,16 @@ const PLANE = `<svg viewBox="0 0 34 34" aria-hidden="true">
 
 // What each stage is doing, in plain words, for the Now card.
 const STAGE_NOTE = {
-  already_pitched: () => 'Checking lemlist for accounts pitched in earlier weeks, so this week\'s 10 are new.',
+  already_pitched: () => 'Checking lemlist for accounts pitched in earlier weeks, so this week\'s __LEADS__ are new.',
   research_and_icp: d => `Researching ${d.company}: what it sells, its customers and case studies, its competitors. Then writing its ideal customer profile.`,
   long_list: () => 'Pulling 100 lookalike companies from Apollo with one search (1 credit), minus customers, competitors and earlier weeks.',
-  triage_and_shortlist: () => 'Reading every company on the list, dropping the misfits and scoring the rest on fit and growth to pick the 30 to research.',
-  enrich: d => `${d.clay_on || d.clay ? 'Running your Clay function on the 30, then researching each one on the web' : 'Researching the 30 one by one on the web'}: a dated trigger from the last 6 months, funding, hiring, and the tools they run.`,
-  final_ten: () => 'Scoring again with the research, picking the 10 with a dated trigger and writing why each one fits.',
-  find_champions: () => 'Finding the right person at each account and revealing their work email (at most 10 Apollo credits).',
+  triage_and_shortlist: () => 'Reading every company on the list, dropping the misfits and scoring the rest on fit and growth to pick the __SHORTLIST__ to research.',
+  enrich: d => `${d.clay_on || d.clay ? 'Running your Clay function on the __SHORTLIST__, then researching them on the web' : 'Researching the __SHORTLIST__ on the web, several at a time'}: a dated trigger from the last 6 months, funding, hiring, and the tools they run.`,
+  final_ten: () => 'Scoring again with the research, picking the __LEADS__ with a dated trigger and writing why each one fits.',
+  find_champions: () => 'Finding the right person at each account and revealing their work email (at most __LEADS__ Apollo credits).',
   write_sequence: () => 'Writing 3 emails for each champion in Kevin\'s voice, then checking every sentence.',
   load_lemlist: () => 'Building the lemlist campaign as a draft with you as the sender: email 1 right away, email 2 two days later, email 3 two days after that. It is never launched, so nothing is sent.',
-  finish: () => 'Writing accounts.xlsx (the 100, the 30 and the 10, with how each was scored), leads.csv, and the emails and report for Word.',
+  finish: () => 'Writing accounts.xlsx (the 100, the __SHORTLIST__ and the __LEADS__, with how each was scored), leads.csv, and the emails and report for Word.',
 };
 
 // The first stage not done: the one running, stopped or failed. -1 when all are done.
@@ -633,7 +732,7 @@ function head(d) {
   return `<div class="head">
       <div>
         <h2 class="company">${esc(d.company)}</h2>
-        <p class="sub">Run of ${day(d.date)}, ${STATE_WORD[d.state].toLowerCase()}${schedules[slugOf(d.id)] ? `. Runs again every ${esc(schedules[slugOf(d.id)].day)} at ${esc(schedules[slugOf(d.id)].time)}` : ''}</p>
+        <p class="sub">${(p => p ? `${esc(p.name)} &middot; ` : '')(projects.find(x => x.id === (runs.find(r => r.id === d.id) || {}).project))}Run of ${day(d.date)}, ${STATE_WORD[d.state].toLowerCase()}${schedules[slugOf(d.id)] ? `. Runs again every ${esc(schedules[slugOf(d.id)].day)} at ${esc(schedules[slugOf(d.id)].time)}` : ''}</p>
         ${d.icp.headline ? `<p class="headline">${rich(d.icp.headline)}</p>` : ''}
       </div>
       ${postmark(d)}
@@ -744,7 +843,8 @@ async function refreshRun() {
 async function refreshState() {
   const s = await api('state');
   runs = s.runs;
-  schedules = s.schedules || {}; canSchedule = !!s.can_schedule;
+  schedules = s.schedules || {}; canSchedule = !!s.can_schedule; projects = s.projects || [];
+  fillProjectSelect();
   if (JSON.stringify(s.keys) !== JSON.stringify(keyState)) checks = null;   // a key changed: the old check no longer holds
   const first = !('apollo' in keyState);
   keyState = s.keys; sdkVersion = s.sdk; claudeVia = s.claude;
@@ -772,18 +872,43 @@ function select(id) {
 function showError(e) { $('#newMsg').textContent = e.message; }
 
 $('#runs').addEventListener('click', e => {
+  const t = e.target.closest('button.gtoggle');
+  if (t) {
+    const g = t.dataset.group;
+    collapsed.has(g) ? collapsed.delete(g) : collapsed.add(g);
+    try { localStorage.setItem('outbound.collapsed', JSON.stringify([...collapsed])); } catch (err) {}
+    renderRuns();
+    $(`.gtoggle[data-group="${CSS.escape(g)}"]`).focus();
+    return;
+  }
   const more = e.target.closest('button.more');
-  if (more) { menuFor === more.dataset.menu ? closeMenu() : (closeMenu(), openMenu(more)); return; }
+  if (more) {
+    const key = more.dataset.pmenu ? 'p:' + more.dataset.pmenu : more.dataset.menu;
+    if (menuFor === key) closeMenu();
+    else { closeMenu(); more.dataset.pmenu ? openProjectMenu(more) : openMenu(more); }
+    return;
+  }
   const b = e.target.closest('button.pick');
   if (b) select(b.dataset.id);
 });
 $('#runMenu').addEventListener('click', async e => {
   const b = e.target.closest('button[data-do]');
   if (!b) return;
-  const r = runs.find(x => x.id === menuFor);
+  const key = menuFor;
   closeMenu();
+  if (key && key.startsWith('p:')) {
+    const p = projects.find(x => x.id === key.slice(2));
+    if (!p) return;
+    if (b.dataset.do === 'rename') openProject('rename', p);
+    else if (b.dataset.do === 'pdelete' && confirm(`Delete the project ${p.name}?\n\nIts runs stay, outside any project.`))
+      projectCall({action: 'delete', id: p.id});
+    return;
+  }
+  const r = runs.find(x => x.id === key);
   if (!r) return;
-  if (b.dataset.do === 'delete') deleteRun(r);
+  if (b.dataset.do === 'move') projectCall({action: 'move', run: r.id, id: b.dataset.pid});
+  else if (b.dataset.do === 'newproject') openProject('create', null, r);
+  else if (b.dataset.do === 'delete') deleteRun(r);
   else if (b.dataset.do === 'schedule') openSchedule(r);
   else if (b.dataset.do === 'unschedule') saveSchedule({company: r.company, off: true}).catch(showError);
 });
@@ -799,6 +924,17 @@ document.addEventListener('click', e => { if (menuFor && !e.target.closest('#run
 window.addEventListener('resize', () => closeMenu());
 $('.side').addEventListener('scroll', () => closeMenu());
 $('#schedCancel').addEventListener('click', () => $('#schedDialog').close());
+$('#newProject').addEventListener('click', () => openProject('create'));
+$('#projCancel').addEventListener('click', () => $('#projDialog').close());
+$('#projForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  const m = projMode, name = e.target.pname.value;
+  try {
+    applyProjects(await api('projects', m.mode === 'rename' ? {action: 'rename', id: m.p.id, name}
+      : {action: 'create', name, run: m.r ? m.r.id : undefined}));
+    $('#projDialog').close();
+  } catch (err) { $('#projMsg').textContent = err.message; }
+});
 $('#schedForm').addEventListener('submit', async e => {
   e.preventDefault();
   const f = e.target;

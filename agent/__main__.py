@@ -109,7 +109,7 @@ def cmd_score(a):
     longlist = sc.apply_triage(c.load(_p(a.run, c.LONGLIST)), c.load_optional(_p(a.run, c.TRIAGE), {}))
     if a.stage == "pre":
         ranked = sc.rank_pre(longlist, icp)
-        n = a.shortlist or sc._cfg(icp, "shortlist")
+        n = a.shortlist or c.SHORTLIST_SIZE
         c.save(_p(a.run, c.SHORTLIST), {"ranked": ranked, "shortlist": [r["domain"] for r in ranked[:n]],
                                         "triage_dropped": longlist["triage_dropped"]})
         for d in longlist["triage_dropped"]:
